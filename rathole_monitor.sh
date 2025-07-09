@@ -1273,4 +1273,11 @@ case "${1:-status}" in
         echo "Use '$0 help' for usage information"
         exit 1
         ;;
-esac
+esac    fi
+    if [[ "$should_restart" == "true" ]]; then
+        return 1  # Needs restart
+    else
+        return 0  # Healthy
+    fi
+}
+
