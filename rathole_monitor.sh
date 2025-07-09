@@ -207,7 +207,15 @@ check_port() {
 get_service_ports() {
     local service_name=$1
     local config_file=""
-    
+    config_file=$(systemctl show "$service_name" --property=ExecStart --value | grep -o '/[^[:space:]]*\.toml' | head -1)
+    if [[ -f "$config_file" ]]; then
+        # استخراج پورت‌ها از bind_addr = "0.0.0.0:PORT"
+        grep -Eo ':[0-9]+' "$config_file" | tr -d ':' | sort -u
+    else
+        # روش جایگزین: تشخیص پورت از نام سرویس (در صورتی که عدد داشته باشه)
+        echo "$service_name" | grep -o '[0-9]\+' | tail -1
+    fi
+}
     # Try to find config file from service definition
     config_file=$(systemctl show "$service_name" --property=ExecStart --value | grep -o '/[^[:space:]]*\.toml' | head -1)
     
