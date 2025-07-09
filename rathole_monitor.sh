@@ -64,6 +64,80 @@ analyze_error_patterns() {
     if [[ $connection_attempts -ge 3 && $success_rate -lt 50 ]]; then
         log_message "WARNING" "Service $service_name has low success rate: $success_rate% (attempts: $connection_attempts)"
         should_restart=true
+        #!/bin/bash
+
+# Rathole Tunnel Monitor Script
+# Automatically monitors and restarts Rathole tunnel services
+
+# Configuration
+LOG_FILE="/var/log/rathole_monitor.log"
+CHECK_INTERVAL=300  # 5 minutes in seconds
+MAX_RETRIES=3
+RETRY_DELAY=10
+ERROR_CHECK_PERIOD="5 minutes ago"  # Time range for checking errors
+MIN_CRITICAL_ERRORS=1  # Minimum critical errors to trigger restart
+ERROR_FREQUENCY_THRESHOLD=5  # Max errors per time period
+ENABLE_SMART_ERROR_DETECTION=true  # Enable smart error filtering
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Function to log messages
+log_message() {
+    local level=$1
+    local message=$2
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${timestamp} [${level}] ${message}" | tee -a "$LOG_FILE"
+}
+
+# Function to check if a port is listening
+check_port() {
+    local port=$1
+    if netstat -tuln | grep -q ":${port} "; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to extract ports from service name or config
+get_service_ports() {
+    local service_name=$1
+    local config_file=""
+    
+    # Try to find config file from service definition
+    config_file=$(systemctl show "$service_name" --property=ExecStart --value | grep -o '/[^[:space:]]*\.toml' | head -1)
+    
+    if [[ -f "$config_file" ]]; then
+        # Extract ports from TOML config file
+        grep -E "bind_addr.*:([0-9]+)" "$config_file" | grep -o '[0-9]\+' | sort -u
+    else
+        # Try to extract port from service name (e.g., rathole-kharej2053 -> 2053)
+        echo "$service_name" | grep -o '[0-9]\+' | tail -1
+    fi
+}
+
+# Function to check service status
+check_service_status() {
+    local service_name=$1
+    local status=$(systemctl is-active "$service_name")
+    
+    if [[ "$status" == "active" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# List of error patterns that should be ignored (not critical)
+IGNORED_ERRORS=(
+    "Connection refused"
+    "Connection reset by peer"
+    "
     fi#!/bin/bash
 
 # Rathole Tunnel Monitor Script
