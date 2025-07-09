@@ -1002,38 +1002,47 @@ check_service_errors() {
     local service_name=$1
     local time_range="${ERROR_CHECK_PERIOD:-5 minutes ago}"
     
-    # Get recent error/warning logs
-    local error_logs=$(journalctl -u "$service_name" --since "$time_range" -p warning --no-pager -q 2>/dev/null)
-    
-    if [[ -z "$error_logs" ]]; then
-        return 0  # No errors found
-    fi
-    
-    # Check each error line
-    local critical_error_count=0
-    local total_error_count=0
-    
-    while IFS= read -r line; do
-        if [[ -n "$line" ]]; then
-            total_error_count=$((total_error_count + 1))
-            
-            if is_critical_error "$line"; then
-                critical_error_count=$((critical_error_count + 1))
-                log_message "WARNING" "Critical error detected in $service_name: $line"
-            else
-                log_message "DEBUG" "Non-critical error ignored in $service_name: $line"
-            fi
+    # Use advanced error analysis if enabled
+    if [[ "$ENABLE_SMART_ERROR_DETECTION" == "true" ]]; then
+        if ! analyze_error_patterns "$service_name"; then
+            return 1  # Critical errors found
         fi
-    done <<< "$error_logs"
-    
-    log_message "INFO" "Service $service_name: $total_error_count total errors, $critical_error_count critical errors"
-    
-    # Only fail if we have critical errors
-    if [[ $critical_error_count -gt 0 ]]; then
-        return 1
     else
-        return 0
+        # Use simple error detection
+        local error_logs=$(journalctl -u "$service_name" --since "$time_range" -p warning --no-pager -q 2>/dev/null)
+        
+        if [[ -z "$error_logs" ]]; then
+            return 0  # No errors found
+        fi
+        
+        # Check each error line
+        local critical_error_count=0
+        local total_error_count=0
+        
+        while IFS= read -r line; do
+            if [[ -n "$line" ]]; then
+                total_error_count=$((total_error_count + 1))
+                
+                if is_critical_error "$line"; then
+                    critical_error_count=$((critical_error_count + 1))
+                    log_message "WARNING" "Critical error detected in $service_name: $line"
+                else
+                    log_message "DEBUG" "Non-critical error ignored in $service_name: $line"
+                fi
+            fi
+        done <<< "$error_logs"
+        
+        log_message "INFO" "Service $service_name: $total_error_count total errors, $critical_error_count critical errors"
+        
+        # Only fail if we have critical errors above threshold
+        if [[ $critical_error_count -ge $MIN_CRITICAL_ERRORS ]]; then
+            return 1
+        else
+            return 0
+        fi
     fi
+    
+    return 0
 }
 
 # Function to restart service with retries
@@ -1273,11 +1282,4 @@ case "${1:-status}" in
         echo "Use '$0 help' for usage information"
         exit 1
         ;;
-esac    fi
-    if [[ "$should_restart" == "true" ]]; then
-        return 1  # Needs restart
-    else
-        return 0  # Healthy
-    fi
-}
-
+esac
