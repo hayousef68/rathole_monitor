@@ -64,6 +64,105 @@ analyze_error_patterns() {
     if [[ $connection_attempts -ge 3 && $success_rate -lt 50 ]]; then
         log_message "WARNING" "Service $service_name has low success rate: $success_rate% (attempts: $connection_attempts)"
         should_restart=true
+        # Return decision
+    if [[ "$should_restart" == "true" ]]; then
+        return 1  # Needs restart
+    else
+        return 0  # No restart needed
+    fi
+}
+
+# Function to check error frequency
+check_error_frequency() {
+    local service_name=$1
+    local time_range="${ERROR_CHECK_PERIOD:-5 minutes ago}"
+    
+    # Count errors in the specified time range
+    local error_count=$(journalctl -u "$service_name" --since "$time_range" -p warning --no-pager -q 2>/dev/null | wc -l)
+    
+    log_message "INFO" "Service $service_name has $error_count errors in the last $ERROR_CHECK_PERIOD"
+    
+    # Check if error frequency exceeds threshold
+    if [[ $error_count -gt $ERROR_FREQUENCY_THRESHOLD ]]; then
+        log_message "WARNING" "Service $service_name has high error frequency: $error_count errors (threshold: $ERROR_FREQUENCY_THRESHOLD)"
+        return 1
+    else
+        return 0
+    fi
+}
+
+# Function to create log directory if it doesn't exist
+create_log_directory() {
+    local log_dir=$(dirname "$LOG_FILE")
+    if [[ ! -d "$log_dir" ]]; then
+        mkdir -p "$log_dir"
+        log_message "INFO" "Created log directory: $log_dir"
+    fi
+}
+
+# Function to rotate log file if it gets too large
+rotate_log_file() {
+    local max_size=$((10 * 1024 * 1024))  # 10MB
+    
+    if [[ -f "$LOG_FILE" ]]; then
+        local file_size=$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
+        
+        if [[ $file_size -gt $max_size ]]; then
+            mv "$LOG_FILE" "${LOG_FILE}.old"
+            log_message "INFO" "Log file rotated due to size limit"
+        fi
+    fi
+}
+
+# Function to validate configuration
+validate_configuration() {
+    # Check if required commands are available
+    local required_commands=("systemctl" "journalctl" "netstat" "grep" "awk")
+    
+    for cmd in "${required_commands[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            log_message "ERROR" "Required command not found: $cmd"
+            return 1
+        fi
+    done
+    
+    # Check if running as root (required for systemctl operations)
+    if [[ $EUID -ne 0 ]]; then
+        log_message "WARNING" "Not running as root. Some operations may fail."
+    fi
+    
+    # Validate numeric configuration values
+    if ! [[ "$CHECK_INTERVAL" =~ ^[0-9]+$ ]] || [[ $CHECK_INTERVAL -lt 60 ]]; then
+        log_message "WARNING" "Invalid CHECK_INTERVAL: $CHECK_INTERVAL. Using default: 300"
+        CHECK_INTERVAL=300
+    fi
+    
+    if ! [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]] || [[ $MAX_RETRIES -lt 1 ]]; then
+        log_message "WARNING" "Invalid MAX_RETRIES: $MAX_RETRIES. Using default: 3"
+        MAX_RETRIES=3
+    fi
+    
+    if ! [[ "$MIN_CRITICAL_ERRORS" =~ ^[0-9]+$ ]] || [[ $MIN_CRITICAL_ERRORS -lt 1 ]]; then
+        log_message "WARNING" "Invalid MIN_CRITICAL_ERRORS: $MIN_CRITICAL_ERRORS. Using default: 1"
+        MIN_CRITICAL_ERRORS=1
+    fi
+    
+    return 0
+}
+
+# Function to cleanup on exit
+cleanup() {
+    log_message "INFO" "Rathole monitor stopping..."
+    exit 0
+}
+
+# Set up signal handlers
+trap cleanup SIGINT SIGTERM
+
+# Initialize
+create_log_directory
+validate_configuration
+rotate_log_file
     fi#!/bin/bash
 
 # Rathole Tunnel Monitor Script
