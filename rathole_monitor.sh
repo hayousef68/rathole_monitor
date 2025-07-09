@@ -215,7 +215,7 @@ get_service_ports() {
         # Extract ports from TOML config file
         grep -E "bind_addr.*:([0-9]+)" "$config_file" | grep -o '[0-9]\+' | sort -u
     else
-        # Try to extract port from service name (e.g., rathole-kharej2053 -> 2053)
+        # Try to extract port from service name (e.g., rathole-kharej -> rathole-kharej)
         echo "$service_name" | grep -o '[0-9]\+' | tail -1
     fi
 }
