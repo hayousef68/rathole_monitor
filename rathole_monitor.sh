@@ -1,144 +1,4 @@
-# Function to analyze error patterns and determine if restart is needed
-analyze_error_patterns() {
-    local service_name=$1
-    local time_range="${ERROR_CHECK_PERIOD:-5 minutes ago}"
-    
-    # Get all logs (not just errors) for pattern analysis
-    local all_logs=$(journalctl -u "$service_name" --since "$time_range" --no-pager -q 2>/dev/null)
-    
-    if [[ -z "$all_logs" ]]; then
-        return 0  # No logs, assume healthy
-    fi
-    
-    local restart_indicators=0
-    local connection_attempts=0
-    local successful_connections=0
-    local failed_connections=0
-    
-    # Analyze logs for patterns
-    while IFS= read -r line; do
-        if [[ -n "$line" ]]; then
-            # Count successful connections
-            if echo "$line" | grep -qi "control channel established\|connection established\|client connected\|server connected"; then
-                successful_connections=$((successful_connections + 1))
-            fi
-            
-            # Count connection attempts
-            if echo "$line" | grep -qi "attempting\|trying\|connecting"; then
-                connection_attempts=$((connection_attempts + 1))
-            fi
-            
-            # Count failed connections (only if not in ignored list)
-            if echo "$line" | grep -qi "failed\|error\|warning"; then
-                if is_critical_error "$line"; then
-                    failed_connections=$((failed_connections + 1))
-                    restart_indicators=$((restart_indicators + 1))
-                fi
-            fi
-            
-            # Check for service restart indicators
-            if echo "$line" | grep -qi "service.*stopped\|service.*failed\|process.*exited\|starting.*service"; then
-                restart_indicators=$((restart_indicators + 1))
-            fi
-        fi
-    done <<< "$all_logs"
-    
-    # Calculate connection success rate
-    local success_rate=0
-    if [[ $connection_attempts -gt 0 ]]; then
-        success_rate=$(( (successful_connections * 100) / connection_attempts ))
-    fi
-    
-    log_message "INFO" "Service $service_name analysis: $successful_connections successful, $failed_connections failed, $success_rate% success rate"
-    
-    # Decision logic for restart
-    local should_restart=false
-    
-    # Restart if too many critical errors
-    if [[ $restart_indicators -ge $MIN_CRITICAL_ERRORS ]]; then
-        log_message "WARNING" "Service $service_name has $restart_indicators critical errors (threshold: $MIN_CRITICAL_ERRORS)"
-        should_restart=true
-    fi
-    
-    # Restart if success rate is too low (less than 50% and some attempts made)
-    if [[ $connection_attempts -ge 3 && $success_rate -lt 50 ]]; then
-        log_message "WARNING" "Service $service_name has low success rate: $success_rate% (attempts: $connection_attempts)"
-        should_restart=true
-        #!/bin/bash
-
-# Rathole Tunnel Monitor Script
-# Automatically monitors and restarts Rathole tunnel services
-
-# Configuration
-LOG_FILE="/var/log/rathole_monitor.log"
-CHECK_INTERVAL=300  # 5 minutes in seconds
-MAX_RETRIES=3
-RETRY_DELAY=10
-ERROR_CHECK_PERIOD="5 minutes ago"  # Time range for checking errors
-MIN_CRITICAL_ERRORS=1  # Minimum critical errors to trigger restart
-ERROR_FREQUENCY_THRESHOLD=5  # Max errors per time period
-ENABLE_SMART_ERROR_DETECTION=true  # Enable smart error filtering
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-# Function to log messages
-log_message() {
-    local level=$1
-    local message=$2
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo -e "${timestamp} [${level}] ${message}" | tee -a "$LOG_FILE"
-}
-
-# Function to check if a port is listening
-check_port() {
-    local port=$1
-    if netstat -tuln | grep -q ":${port} "; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Function to extract ports from service name or config
-get_service_ports() {
-    local service_name=$1
-    local config_file=""
-    
-    # Try to find config file from service definition
-    config_file=$(systemctl show "$service_name" --property=ExecStart --value | grep -o '/[^[:space:]]*\.toml' | head -1)
-    
-    if [[ -f "$config_file" ]]; then
-        # Extract ports from TOML config file
-        grep -E "bind_addr.*:([0-9]+)" "$config_file" | grep -o '[0-9]\+' | sort -u
-    else
-        # Try to extract port from service name (e.g., rathole-kharej2053 -> 2053)
-        echo "$service_name" | grep -o '[0-9]\+' | tail -1
-    fi
-}
-
-# Function to check service status
-check_service_status() {
-    local service_name=$1
-    local status=$(systemctl is-active "$service_name")
-    
-    if [[ "$status" == "active" ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# List of error patterns that should be ignored (not critical)
-IGNORED_ERRORS=(
-    "Connection refused"
-    "Connection reset by peer"
-    "
-    fi#!/bin/bash
+#!/bin/bash
 
 # Rathole Tunnel Monitor Script
 # Automatically monitors and restarts Rathole tunnel services
@@ -361,16 +221,6 @@ IGNORED_ERRORS=(
     "Connection attempt failed due to network limitation"
     "Connection attempt failed due to network throttling"
     "Connection attempt failed due to network blocking"
-    "Connection attempt failed 1 time"
-    "Connection attempt failed 2 times"
-    "Connection attempt failed 3 times"
-    "Connection attempt failed 4 times"
-    "Connection attempt failed 5 times"
-    "Connection attempt failed 6 times"
-    "Connection attempt failed 7 times"
-    "Connection attempt failed 8 times"
-    "Connection attempt failed 9 times"
-    "Connection attempt failed 10 times"
 )
 
 # List of critical error patterns that require restart
@@ -404,374 +254,6 @@ CRITICAL_ERRORS=(
     "failed to load config"
     "failed to parse config"
     "failed to read config"
-    "failed to open"
-    "failed to create"
-    "failed to write"
-    "failed to read"
-    "failed to close"
-    "failed to flush"
-    "failed to seek"
-    "failed to stat"
-    "failed to sync"
-    "failed to lock"
-    "failed to unlock"
-    "failed to allocate"
-    "failed to free"
-    "failed to initialize"
-    "failed to cleanup"
-    "failed to finalize"
-    "failed to destroy"
-    "failed to create thread"
-    "failed to join thread"
-    "failed to spawn thread"
-    "failed to send"
-    "failed to receive"
-    "failed to process"
-    "failed to execute"
-    "failed to run"
-    "failed to start process"
-    "failed to stop process"
-    "failed to kill process"
-    "failed to restart process"
-    "failed to reload"
-    "failed to update"
-    "failed to upgrade"
-    "failed to downgrade"
-    "failed to install"
-    "failed to uninstall"
-    "failed to configure"
-    "failed to setup"
-    "failed to init"
-    "failed to boot"
-    "failed to shutdown"
-    "failed to reboot"
-    "failed to mount"
-    "failed to unmount"
-    "failed to format"
-    "failed to backup"
-    "failed to restore"
-    "failed to recover"
-    "failed to repair"
-    "failed to validate"
-    "failed to verify"
-    "failed to authenticate"
-    "failed to authorize"
-    "failed to login"
-    "failed to logout"
-    "failed to register"
-    "failed to unregister"
-    "failed to enable"
-    "failed to disable"
-    "failed to activate"
-    "failed to deactivate"
-    "failed to suspend"
-    "failed to resume"
-    "failed to pause"
-    "failed to continue"
-    "failed to stop"
-    "failed to start"
-    "failed to restart"
-    "failed to reload"
-    "failed to reset"
-    "failed to clear"
-    "failed to flush"
-    "failed to sync"
-    "failed to commit"
-    "failed to rollback"
-    "failed to save"
-    "failed to load"
-    "failed to import"
-    "failed to export"
-    "failed to copy"
-    "failed to move"
-    "failed to delete"
-    "failed to remove"
-    "failed to rename"
-    "failed to create directory"
-    "failed to create file"
-    "failed to delete directory"
-    "failed to delete file"
-    "failed to read directory"
-    "failed to read file"
-    "failed to write directory"
-    "failed to write file"
-    "failed to access directory"
-    "failed to access file"
-    "failed to find directory"
-    "failed to find file"
-    "failed to open directory"
-    "failed to open file"
-    "failed to close directory"
-    "failed to close file"
-    "failed to lock directory"
-    "failed to lock file"
-    "failed to unlock directory"
-    "failed to unlock file"
-    "failed to chmod"
-    "failed to chown"
-    "failed to chgrp"
-    "failed to link"
-    "failed to symlink"
-    "failed to unlink"
-    "failed to stat"
-    "failed to lstat"
-    "failed to fstat"
-    "failed to truncate"
-    "failed to expand"
-    "failed to compress"
-    "failed to decompress"
-    "failed to archive"
-    "failed to unarchive"
-    "failed to encrypt"
-    "failed to decrypt"
-    "failed to hash"
-    "failed to checksum"
-    "failed to generate"
-    "failed to compute"
-    "failed to calculate"
-    "failed to measure"
-    "failed to test"
-    "failed to check"
-    "failed to validate"
-    "failed to verify"
-    "failed to confirm"
-    "failed to ensure"
-    "failed to assert"
-    "failed to evaluate"
-    "failed to analyze"
-    "failed to diagnose"
-    "failed to debug"
-    "failed to trace"
-    "failed to profile"
-    "failed to monitor"
-    "failed to watch"
-    "failed to observe"
-    "failed to track"
-    "failed to follow"
-    "failed to inspect"
-    "failed to examine"
-    "failed to investigate"
-    "failed to explore"
-    "failed to discover"
-    "failed to search"
-    "failed to find"
-    "failed to locate"
-    "failed to retrieve"
-    "failed to fetch"
-    "failed to get"
-    "failed to obtain"
-    "failed to acquire"
-    "failed to collect"
-    "failed to gather"
-    "failed to compile"
-    "failed to build"
-    "failed to make"
-    "failed to create"
-    "failed to generate"
-    "failed to produce"
-    "failed to construct"
-    "failed to assemble"
-    "failed to link"
-    "failed to package"
-    "failed to deploy"
-    "failed to release"
-    "failed to publish"
-    "failed to distribute"
-    "failed to install"
-    "failed to uninstall"
-    "failed to setup"
-    "failed to configure"
-    "failed to customize"
-    "failed to adapt"
-    "failed to adjust"
-    "failed to modify"
-    "failed to change"
-    "failed to update"
-    "failed to upgrade"
-    "failed to downgrade"
-    "failed to migrate"
-    "failed to convert"
-    "failed to transform"
-    "failed to format"
-    "failed to parse"
-    "failed to serialize"
-    "failed to deserialize"
-    "failed to encode"
-    "failed to decode"
-    "failed to compress"
-    "failed to decompress"
-    "failed to zip"
-    "failed to unzip"
-    "failed to tar"
-    "failed to untar"
-    "failed to gzip"
-    "failed to gunzip"
-    "failed to encrypt"
-    "failed to decrypt"
-    "failed to sign"
-    "failed to verify signature"
-    "failed to hash"
-    "failed to checksum"
-    "failed to validate checksum"
-    "failed to compare"
-    "failed to match"
-    "failed to filter"
-    "failed to sort"
-    "failed to group"
-    "failed to aggregate"
-    "failed to summarize"
-    "failed to reduce"
-    "failed to map"
-    "failed to transform"
-    "failed to apply"
-    "failed to execute"
-    "failed to run"
-    "failed to call"
-    "failed to invoke"
-    "failed to trigger"
-    "failed to fire"
-    "failed to emit"
-    "failed to broadcast"
-    "failed to publish"
-    "failed to subscribe"
-    "failed to unsubscribe"
-    "failed to notify"
-    "failed to alert"
-    "failed to warn"
-    "failed to report"
-    "failed to log"
-    "failed to record"
-    "failed to store"
-    "failed to persist"
-    "failed to commit"
-    "failed to save"
-    "failed to backup"
-    "failed to restore"
-    "failed to recover"
-    "failed to repair"
-    "failed to fix"
-    "failed to resolve"
-    "failed to solve"
-    "failed to handle"
-    "failed to process"
-    "failed to manage"
-    "failed to control"
-    "failed to operate"
-    "failed to function"
-    "failed to work"
-    "failed to perform"
-    "failed to execute"
-    "failed to complete"
-    "failed to finish"
-    "failed to done"
-    "failed to succeed"
-    "failed to fail"
-    "failed to error"
-    "failed to crash"
-    "failed to exit"
-    "failed to terminate"
-    "failed to quit"
-    "failed to stop"
-    "failed to end"
-    "failed to close"
-    "failed to shutdown"
-    "failed to restart"
-    "failed to reboot"
-    "failed to reset"
-    "failed to clear"
-    "failed to flush"
-    "failed to sync"
-    "failed to wait"
-    "failed to sleep"
-    "failed to pause"
-    "failed to resume"
-    "failed to continue"
-    "failed to yield"
-    "failed to return"
-    "failed to respond"
-    "failed to reply"
-    "failed to answer"
-    "failed to acknowledge"
-    "failed to confirm"
-    "failed to accept"
-    "failed to reject"
-    "failed to deny"
-    "failed to allow"
-    "failed to permit"
-    "failed to grant"
-    "failed to revoke"
-    "failed to authorize"
-    "failed to authenticate"
-    "failed to login"
-    "failed to logout"
-    "failed to register"
-    "failed to unregister"
-    "failed to subscribe"
-    "failed to unsubscribe"
-    "failed to connect"
-    "failed to disconnect"
-    "failed to bind"
-    "failed to unbind"
-    "failed to attach"
-    "failed to detach"
-    "failed to associate"
-    "failed to disassociate"
-    "failed to link"
-    "failed to unlink"
-    "failed to couple"
-    "failed to decouple"
-    "failed to join"
-    "failed to leave"
-    "failed to enter"
-    "failed to exit"
-    "failed to open"
-    "failed to close"
-    "failed to lock"
-    "failed to unlock"
-    "failed to acquire"
-    "failed to release"
-    "failed to allocate"
-    "failed to free"
-    "failed to reserve"
-    "failed to unreserve"
-    "failed to claim"
-    "failed to unclaim"
-    "failed to take"
-    "failed to give"
-    "failed to get"
-    "failed to set"
-    "failed to put"
-    "failed to push"
-    "failed to pop"
-    "failed to peek"
-    "failed to insert"
-    "failed to remove"
-    "failed to delete"
-    "failed to add"
-    "failed to append"
-    "failed to prepend"
-    "failed to concat"
-    "failed to merge"
-    "failed to split"
-    "failed to slice"
-    "failed to cut"
-    "failed to copy"
-    "failed to move"
-    "failed to swap"
-    "failed to replace"
-    "failed to substitute"
-    "failed to change"
-    "failed to modify"
-    "failed to update"
-    "failed to upgrade"
-    "failed to downgrade"
-    "failed to migrate"
-    "failed to convert"
-    "failed to transform"
-    "failed to format"
-    "failed to parse"
-    "failed to serialize"
-    "failed to deserialize"
     "config validation failed"
     "invalid configuration"
     "configuration syntax error"
@@ -780,185 +262,6 @@ CRITICAL_ERRORS=(
     "configuration parse error"
     "configuration load error"
     "configuration read error"
-    "configuration write error"
-    "configuration save error"
-    "configuration backup error"
-    "configuration restore error"
-    "configuration validation error"
-    "configuration check error"
-    "configuration test error"
-    "configuration apply error"
-    "configuration update error"
-    "configuration upgrade error"
-    "configuration downgrade error"
-    "configuration migration error"
-    "configuration conversion error"
-    "configuration transformation error"
-    "configuration format error"
-    "configuration parse error"
-    "configuration serialization error"
-    "configuration deserialization error"
-    "configuration encoding error"
-    "configuration decoding error"
-    "configuration compression error"
-    "configuration decompression error"
-    "configuration encryption error"
-    "configuration decryption error"
-    "configuration signing error"
-    "configuration verification error"
-    "configuration hash error"
-    "configuration checksum error"
-    "configuration validation error"
-    "configuration comparison error"
-    "configuration match error"
-    "configuration filter error"
-    "configuration sort error"
-    "configuration group error"
-    "configuration aggregate error"
-    "configuration summarize error"
-    "configuration reduce error"
-    "configuration map error"
-    "configuration transform error"
-    "configuration apply error"
-    "configuration execute error"
-    "configuration run error"
-    "configuration call error"
-    "configuration invoke error"
-    "configuration trigger error"
-    "configuration fire error"
-    "configuration emit error"
-    "configuration broadcast error"
-    "configuration publish error"
-    "configuration subscribe error"
-    "configuration unsubscribe error"
-    "configuration notify error"
-    "configuration alert error"
-    "configuration warn error"
-    "configuration report error"
-    "configuration log error"
-    "configuration record error"
-    "configuration store error"
-    "configuration persist error"
-    "configuration commit error"
-    "configuration save error"
-    "configuration backup error"
-    "configuration restore error"
-    "configuration recover error"
-    "configuration repair error"
-    "configuration fix error"
-    "configuration resolve error"
-    "configuration solve error"
-    "configuration handle error"
-    "configuration process error"
-    "configuration manage error"
-    "configuration control error"
-    "configuration operate error"
-    "configuration function error"
-    "configuration work error"
-    "configuration perform error"
-    "configuration execute error"
-    "configuration complete error"
-    "configuration finish error"
-    "configuration done error"
-    "configuration success error"
-    "configuration fail error"
-    "configuration error error"
-    "configuration crash error"
-    "configuration exit error"
-    "configuration terminate error"
-    "configuration quit error"
-    "configuration stop error"
-    "configuration end error"
-    "configuration close error"
-    "configuration shutdown error"
-    "configuration restart error"
-    "configuration reboot error"
-    "configuration reset error"
-    "configuration clear error"
-    "configuration flush error"
-    "configuration sync error"
-    "configuration wait error"
-    "configuration sleep error"
-    "configuration pause error"
-    "configuration resume error"
-    "configuration continue error"
-    "configuration yield error"
-    "configuration return error"
-    "configuration respond error"
-    "configuration reply error"
-    "configuration answer error"
-    "configuration acknowledge error"
-    "configuration confirm error"
-    "configuration accept error"
-    "configuration reject error"
-    "configuration deny error"
-    "configuration allow error"
-    "configuration permit error"
-    "configuration grant error"
-    "configuration revoke error"
-    "configuration authorize error"
-    "configuration authenticate error"
-    "configuration login error"
-    "configuration logout error"
-    "configuration register error"
-    "configuration unregister error"
-    "configuration subscribe error"
-    "configuration unsubscribe error"
-    "configuration connect error"
-    "configuration disconnect error"
-    "configuration bind error"
-    "configuration unbind error"
-    "configuration attach error"
-    "configuration detach error"
-    "configuration associate error"
-    "configuration disassociate error"
-    "configuration link error"
-    "configuration unlink error"
-    "configuration couple error"
-    "configuration decouple error"
-    "configuration join error"
-    "configuration leave error"
-    "configuration enter error"
-    "configuration exit error"
-    "configuration open error"
-    "configuration close error"
-    "configuration lock error"
-    "configuration unlock error"
-    "configuration acquire error"
-    "configuration release error"
-    "configuration allocate error"
-    "configuration free error"
-    "configuration reserve error"
-    "configuration unreserve error"
-    "configuration claim error"
-    "configuration unclaim error"
-    "configuration take error"
-    "configuration give error"
-    "configuration get error"
-    "configuration set error"
-    "configuration put error"
-    "configuration push error"
-    "configuration pop error"
-    "configuration peek error"
-    "configuration insert error"
-    "configuration remove error"
-    "configuration delete error"
-    "configuration add error"
-    "configuration append error"
-    "configuration prepend error"
-    "configuration concat error"
-    "configuration merge error"
-    "configuration split error"
-    "configuration slice error"
-    "configuration cut error"
-    "configuration copy error"
-    "configuration move error"
-    "configuration swap error"
-    "configuration replace error"
-    "configuration substitute error"
-    "configuration change error"
-    "configuration modify error"
-    "configuration update error"
     "PermissionError"
     "FileNotFoundError"
     "IOError"
@@ -1069,6 +372,82 @@ is_critical_error() {
     
     # If not in either list, consider it potentially critical
     return 0
+}
+
+# Function to analyze error patterns and determine if restart is needed
+analyze_error_patterns() {
+    local service_name=$1
+    local time_range="${ERROR_CHECK_PERIOD:-5 minutes ago}"
+    
+    # Get all logs (not just errors) for pattern analysis
+    local all_logs=$(journalctl -u "$service_name" --since "$time_range" --no-pager -q 2>/dev/null)
+    
+    if [[ -z "$all_logs" ]]; then
+        return 0  # No logs, assume healthy
+    fi
+    
+    local restart_indicators=0
+    local connection_attempts=0
+    local successful_connections=0
+    local failed_connections=0
+    
+    # Analyze logs for patterns
+    while IFS= read -r line; do
+        if [[ -n "$line" ]]; then
+            # Count successful connections
+            if echo "$line" | grep -qi "control channel established\|connection established\|client connected\|server connected"; then
+                successful_connections=$((successful_connections + 1))
+            fi
+            
+            # Count connection attempts
+            if echo "$line" | grep -qi "attempting\|trying\|connecting"; then
+                connection_attempts=$((connection_attempts + 1))
+            fi
+            
+            # Count failed connections (only if not in ignored list)
+            if echo "$line" | grep -qi "failed\|error\|warning"; then
+                if is_critical_error "$line"; then
+                    failed_connections=$((failed_connections + 1))
+                    restart_indicators=$((restart_indicators + 1))
+                fi
+            fi
+            
+            # Check for service restart indicators
+            if echo "$line" | grep -qi "service.*stopped\|service.*failed\|process.*exited\|starting.*service"; then
+                restart_indicators=$((restart_indicators + 1))
+            fi
+        fi
+    done <<< "$all_logs"
+    
+    # Calculate connection success rate
+    local success_rate=0
+    if [[ $connection_attempts -gt 0 ]]; then
+        success_rate=$(( (successful_connections * 100) / connection_attempts ))
+    fi
+    
+    log_message "INFO" "Service $service_name analysis: $successful_connections successful, $failed_connections failed, $success_rate% success rate"
+    
+    # Decision logic for restart
+    local should_restart=false
+    
+    # Restart if too many critical errors
+    if [[ $restart_indicators -ge $MIN_CRITICAL_ERRORS ]]; then
+        log_message "WARNING" "Service $service_name has $restart_indicators critical errors (threshold: $MIN_CRITICAL_ERRORS)"
+        should_restart=true
+    fi
+    
+    # Restart if success rate is too low (less than 50% and some attempts made)
+    if [[ $connection_attempts -ge 3 && $success_rate -lt 50 ]]; then
+        log_message "WARNING" "Service $service_name has low success rate: $success_rate% (attempts: $connection_attempts)"
+        should_restart=true
+    fi
+    
+    # Return result
+    if [[ $should_restart == true ]]; then
+        return 1  # Restart needed
+    fi
+    
+    return 0  # No restart needed
 }
 
 # Function to check if service has recent critical errors
@@ -1357,3 +736,539 @@ case "${1:-status}" in
         exit 1
         ;;
 esac
+# Function to test service configuration
+test_service_config() {
+    local service_name=$1
+    local config_file=""
+    
+    # Try to find config file from service definition
+    config_file=$(systemctl show "$service_name" --property=ExecStart --value | grep -o '/[^[:space:]]*\.toml' | head -1)
+    
+    if [[ -f "$config_file" ]]; then
+        echo -e "${BLUE}Testing configuration for $service_name${NC}"
+        echo "Config file: $config_file"
+        
+        # Check if config file is readable
+        if [[ -r "$config_file" ]]; then
+            echo -e "${GREEN}✓${NC} Configuration file is readable"
+            
+            # Basic TOML syntax check
+            if command -v toml > /dev/null 2>&1; then
+                if toml verify "$config_file" > /dev/null 2>&1; then
+                    echo -e "${GREEN}✓${NC} TOML syntax is valid"
+                else
+                    echo -e "${RED}✗${NC} TOML syntax error detected"
+                    return 1
+                fi
+            else
+                echo -e "${YELLOW}⚠${NC} TOML validator not available, skipping syntax check"
+            fi
+            
+            # Check for required fields
+            if grep -q "bind_addr" "$config_file"; then
+                echo -e "${GREEN}✓${NC} bind_addr configuration found"
+            else
+                echo -e "${RED}✗${NC} bind_addr configuration missing"
+                return 1
+            fi
+            
+        else
+            echo -e "${RED}✗${NC} Configuration file is not readable"
+            return 1
+        fi
+    else
+        echo -e "${YELLOW}⚠${NC} Configuration file not found for $service_name"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to show detailed service information
+show_service_details() {
+    local service_name=$1
+    
+    echo -e "${BLUE}=== Details for $service_name ===${NC}"
+    echo ""
+    
+    # Service status
+    local status=$(systemctl is-active "$service_name")
+    local enabled=$(systemctl is-enabled "$service_name")
+    
+    echo "Status: $status"
+    echo "Enabled: $enabled"
+    
+    # Service uptime
+    local uptime=$(systemctl show "$service_name" --property=ActiveEnterTimestamp --value)
+    if [[ -n "$uptime" && "$uptime" != "n/a" ]]; then
+        echo "Started: $uptime"
+    fi
+    
+    # Memory usage
+    local memory=$(systemctl show "$service_name" --property=MemoryCurrent --value)
+    if [[ -n "$memory" && "$memory" != "[not set]" ]]; then
+        echo "Memory: $(numfmt --to=iec $memory)"
+    fi
+    
+    # Process ID
+    local pid=$(systemctl show "$service_name" --property=MainPID --value)
+    if [[ -n "$pid" && "$pid" != "0" ]]; then
+        echo "PID: $pid"
+    fi
+    
+    # Ports
+    local ports=$(get_service_ports "$service_name")
+    if [[ -n "$ports" ]]; then
+        echo "Ports: $ports"
+        
+        # Check port status
+        for port in $ports; do
+            if check_port "$port"; then
+                echo -e "  Port $port: ${GREEN}Listening${NC}"
+            else
+                echo -e "  Port $port: ${RED}Not listening${NC}"
+            fi
+        done
+    fi
+    
+    # Recent logs
+    echo ""
+    echo -e "${BLUE}Recent logs:${NC}"
+    journalctl -u "$service_name" --lines=10 --no-pager -q 2>/dev/null || echo "No logs available"
+    
+    echo ""
+}
+
+# Function to export configuration
+export_config() {
+    local export_file="rathole_monitor_config.conf"
+    
+    cat > "$export_file" << EOF
+# Rathole Monitor Configuration
+# Generated on $(date)
+
+# Monitoring settings
+CHECK_INTERVAL=$CHECK_INTERVAL
+MAX_RETRIES=$MAX_RETRIES
+RETRY_DELAY=$RETRY_DELAY
+ERROR_CHECK_PERIOD="$ERROR_CHECK_PERIOD"
+MIN_CRITICAL_ERRORS=$MIN_CRITICAL_ERRORS
+ERROR_FREQUENCY_THRESHOLD=$ERROR_FREQUENCY_THRESHOLD
+ENABLE_SMART_ERROR_DETECTION=$ENABLE_SMART_ERROR_DETECTION
+
+# Logging
+LOG_FILE="$LOG_FILE"
+
+# Services found
+RATHOLE_SERVICES="$(get_rathole_services | tr '\n' ' ')"
+EOF
+    
+    echo -e "${GREEN}Configuration exported to: $export_file${NC}"
+}
+
+# Function to import configuration
+import_config() {
+    local config_file="$1"
+    
+    if [[ ! -f "$config_file" ]]; then
+        echo -e "${RED}Configuration file not found: $config_file${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}Importing configuration from: $config_file${NC}"
+    
+    # Source the configuration file
+    source "$config_file"
+    
+    echo -e "${GREEN}Configuration imported successfully${NC}"
+}
+
+# Function to create backup
+create_backup() {
+    local backup_dir="/var/backups/rathole-monitor"
+    local backup_file="$backup_dir/rathole-monitor-$(date +%Y%m%d_%H%M%S).tar.gz"
+    
+    # Create backup directory
+    mkdir -p "$backup_dir"
+    
+    # Create temporary directory for backup
+    local temp_dir=$(mktemp -d)
+    
+    # Copy important files
+    cp "$0" "$temp_dir/rathole-monitor.sh" 2>/dev/null
+    cp "$LOG_FILE" "$temp_dir/rathole-monitor.log" 2>/dev/null
+    
+    # Copy systemd service file if exists
+    if [[ -f "/etc/systemd/system/rathole-monitor.service" ]]; then
+        cp "/etc/systemd/system/rathole-monitor.service" "$temp_dir/"
+    fi
+    
+    # Copy rathole configs
+    mkdir -p "$temp_dir/configs"
+    local services=$(get_rathole_services)
+    for service in $services; do
+        local config_file=$(systemctl show "$service" --property=ExecStart --value | grep -o '/[^[:space:]]*\.toml' | head -1)
+        if [[ -f "$config_file" ]]; then
+            cp "$config_file" "$temp_dir/configs/"
+        fi
+    done
+    
+    # Create backup archive
+    tar -czf "$backup_file" -C "$temp_dir" .
+    
+    # Clean up
+    rm -rf "$temp_dir"
+    
+    echo -e "${GREEN}Backup created: $backup_file${NC}"
+}
+
+# Function to restore from backup
+restore_backup() {
+    local backup_file="$1"
+    
+    if [[ ! -f "$backup_file" ]]; then
+        echo -e "${RED}Backup file not found: $backup_file${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}Restoring from backup: $backup_file${NC}"
+    
+    # Create temporary directory
+    local temp_dir=$(mktemp -d)
+    
+    # Extract backup
+    tar -xzf "$backup_file" -C "$temp_dir"
+    
+    # Restore files
+    if [[ -f "$temp_dir/rathole-monitor.sh" ]]; then
+        cp "$temp_dir/rathole-monitor.sh" "$0"
+        chmod +x "$0"
+        echo -e "${GREEN}✓${NC} Script restored"
+    fi
+    
+    if [[ -f "$temp_dir/rathole-monitor.log" ]]; then
+        cp "$temp_dir/rathole-monitor.log" "$LOG_FILE"
+        echo -e "${GREEN}✓${NC} Log file restored"
+    fi
+    
+    if [[ -f "$temp_dir/rathole-monitor.service" ]]; then
+        cp "$temp_dir/rathole-monitor.service" "/etc/systemd/system/"
+        systemctl daemon-reload
+        echo -e "${GREEN}✓${NC} Service file restored"
+    fi
+    
+    # Restore configs
+    if [[ -d "$temp_dir/configs" ]]; then
+        echo -e "${GREEN}✓${NC} Configuration files found in backup"
+        ls -la "$temp_dir/configs/"
+    fi
+    
+    # Clean up
+    rm -rf "$temp_dir"
+    
+    echo -e "${GREEN}Restore completed${NC}"
+}
+
+# Function to run diagnostics
+run_diagnostics() {
+    echo -e "${BLUE}=== Rathole Monitor Diagnostics ===${NC}"
+    echo ""
+    
+    # System information
+    echo -e "${BLUE}System Information:${NC}"
+    echo "OS: $(uname -s) $(uname -r)"
+    echo "Hostname: $(hostname)"
+    echo "Uptime: $(uptime -p)"
+    echo "Date: $(date)"
+    echo ""
+    
+    # Check dependencies
+    echo -e "${BLUE}Dependencies:${NC}"
+    local deps=("systemctl" "journalctl" "netstat" "grep" "awk" "sed")
+    for dep in "${deps[@]}"; do
+        if command -v "$dep" > /dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC} $dep"
+        else
+            echo -e "${RED}✗${NC} $dep (missing)"
+        fi
+    done
+    echo ""
+    
+    # Check permissions
+    echo -e "${BLUE}Permissions:${NC}"
+    if [[ $(id -u) -eq 0 ]]; then
+        echo -e "${GREEN}✓${NC} Running as root"
+    else
+        echo -e "${YELLOW}⚠${NC} Not running as root"
+    fi
+    
+    # Check log file
+    if [[ -f "$LOG_FILE" ]]; then
+        if [[ -w "$LOG_FILE" ]]; then
+            echo -e "${GREEN}✓${NC} Log file writable: $LOG_FILE"
+        else
+            echo -e "${RED}✗${NC} Log file not writable: $LOG_FILE"
+        fi
+    else
+        echo -e "${YELLOW}⚠${NC} Log file doesn't exist: $LOG_FILE"
+    fi
+    echo ""
+    
+    # Check services
+    echo -e "${BLUE}Rathole Services:${NC}"
+    local services=$(get_rathole_services)
+    if [[ -n "$services" ]]; then
+        for service in $services; do
+            display_status "$service"
+        done
+    else
+        echo -e "${YELLOW}⚠${NC} No rathole services found"
+    fi
+    echo ""
+    
+    # Network check
+    echo -e "${BLUE}Network Status:${NC}"
+    if ping -c 1 8.8.8.8 > /dev/null 2>&1; then
+        echo -e "${GREEN}✓${NC} Internet connectivity"
+    else
+        echo -e "${RED}✗${NC} No internet connectivity"
+    fi
+    
+    # Check listening ports
+    echo -e "${BLUE}Listening Ports:${NC}"
+    netstat -tuln | grep LISTEN | head -10
+    echo ""
+    
+    # Disk space
+    echo -e "${BLUE}Disk Usage:${NC}"
+    df -h / | tail -1
+    echo ""
+    
+    # Memory usage
+    echo -e "${BLUE}Memory Usage:${NC}"
+    free -h
+    echo ""
+    
+    # Recent system errors
+    echo -e "${BLUE}Recent System Errors:${NC}"
+    journalctl -p err --since "1 hour ago" --no-pager -q | head -5 2>/dev/null || echo "No recent errors"
+}
+
+# Function to show version information
+show_version() {
+    echo "Rathole Tunnel Monitor Script"
+    echo "Version: 2.0.0"
+    echo "Author: System Administrator"
+    echo "License: MIT"
+    echo "Description: Automated monitoring and management script for Rathole tunnel services"
+}
+
+# Function to clean old logs
+clean_logs() {
+    local days="${1:-7}"
+    
+    echo -e "${BLUE}Cleaning logs older than $days days...${NC}"
+    
+    # Clean main log file
+    if [[ -f "$LOG_FILE" ]]; then
+        local temp_file=$(mktemp)
+        local cutoff_date=$(date -d "$days days ago" '+%Y-%m-%d')
+        
+        # Keep only recent logs
+        grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}" "$LOG_FILE" | \
+        while IFS= read -r line; do
+            local log_date=$(echo "$line" | cut -d' ' -f1)
+            if [[ "$log_date" > "$cutoff_date" ]]; then
+                echo "$line" >> "$temp_file"
+            fi
+        done
+        
+        # Replace original file
+        mv "$temp_file" "$LOG_FILE"
+        echo -e "${GREEN}✓${NC} Main log cleaned"
+    fi
+    
+    # Clean journal logs for rathole services
+    local services=$(get_rathole_services)
+    for service in $services; do
+        journalctl --vacuum-time="${days}d" --unit="$service" > /dev/null 2>&1
+    done
+    
+    echo -e "${GREEN}✓${NC} Journal logs cleaned"
+}
+
+# Function to update script
+update_script() {
+    echo -e "${BLUE}Checking for script updates...${NC}"
+    
+    # Create backup of current script
+    local backup_file="/tmp/rathole-monitor-backup-$(date +%Y%m%d_%H%M%S).sh"
+    cp "$0" "$backup_file"
+    
+    echo -e "${GREEN}✓${NC} Current script backed up to: $backup_file"
+    echo -e "${YELLOW}Update functionality would be implemented here${NC}"
+    echo "Manual update: Replace this script with newer version"
+}
+
+# Enhanced help function with more options
+show_help() {
+    cat << EOF
+${BLUE}Rathole Tunnel Monitor Script${NC}
+
+${YELLOW}USAGE:${NC}
+    $0 [OPTION] [ARGUMENTS]
+
+${YELLOW}BASIC OPTIONS:${NC}
+    monitor                 Run monitoring once
+    daemon                  Run as daemon (continuous monitoring)
+    status                  Show current status of all rathole services
+    install                 Install as systemd service
+    uninstall               Uninstall systemd service
+
+${YELLOW}ADVANCED OPTIONS:${NC}
+    details <service>       Show detailed information about a service
+    test <service>          Test service configuration
+    restart <service>       Restart specific service
+    logs <service>          Show logs for specific service
+    diagnostics             Run system diagnostics
+    export                  Export current configuration
+    import <file>           Import configuration from file
+    backup                  Create backup of script and configs
+    restore <file>          Restore from backup file
+    clean [days]            Clean old logs (default: 7 days)
+    update                  Check for script updates
+    version                 Show version information
+
+${YELLOW}EXAMPLES:${NC}
+    $0 monitor                      # Run monitoring once
+    $0 daemon                       # Run continuous monitoring
+    $0 status                       # Show status of all services
+    $0 details rathole-server       # Show details for specific service
+    $0 test rathole-client          # Test service configuration
+    $0 restart rathole-server       # Restart specific service
+    $0 logs rathole-client          # Show logs for service
+    $0 diagnostics                  # Run full diagnostics
+    $0 clean 30                     # Clean logs older than 30 days
+    $0 backup                       # Create backup
+    $0 restore /path/to/backup.tar.gz # Restore from backup
+
+${YELLOW}CONFIGURATION:${NC}
+    Edit variables at the top of this script to customize behavior:
+    - CHECK_INTERVAL: Time between checks (default: 300 seconds)
+    - MAX_RETRIES: Maximum restart attempts (default: 3)
+    - ERROR_CHECK_PERIOD: Time range for error analysis (default: 5 minutes)
+    - LOG_FILE: Path to log file (default: /var/log/rathole_monitor.log)
+
+${YELLOW}SERVICE MANAGEMENT:${NC}
+    After installation as systemd service:
+    - systemctl status rathole-monitor    # Check service status
+    - systemctl start rathole-monitor     # Start service
+    - systemctl stop rathole-monitor      # Stop service
+    - systemctl restart rathole-monitor   # Restart service
+    - journalctl -u rathole-monitor -f    # Follow service logs
+
+EOF
+}
+
+# Enhanced main script logic with new options
+case "${1:-status}" in
+    monitor)
+        main_monitor
+        ;;
+    daemon)
+        run_daemon
+        ;;
+    status)
+        show_status
+        ;;
+    install)
+        install_service
+        ;;
+    uninstall)
+        uninstall_service
+        ;;
+    details)
+        if [[ -n "$2" ]]; then
+            show_service_details "$2"
+        else
+            echo -e "${RED}Error: Please specify a service name${NC}"
+            echo "Usage: $0 details <service_name>"
+            exit 1
+        fi
+        ;;
+    test)
+        if [[ -n "$2" ]]; then
+            test_service_config "$2"
+        else
+            echo -e "${RED}Error: Please specify a service name${NC}"
+            echo "Usage: $0 test <service_name>"
+            exit 1
+        fi
+        ;;
+    restart)
+        if [[ -n "$2" ]]; then
+            restart_service "$2"
+        else
+            echo -e "${RED}Error: Please specify a service name${NC}"
+            echo "Usage: $0 restart <service_name>"
+            exit 1
+        fi
+        ;;
+    logs)
+        if [[ -n "$2" ]]; then
+            echo -e "${BLUE}=== Logs for $2 ===${NC}"
+            journalctl -u "$2" --no-pager -q 2>/dev/null || echo "No logs available"
+        else
+            echo -e "${RED}Error: Please specify a service name${NC}"
+            echo "Usage: $0 logs <service_name>"
+            exit 1
+        fi
+        ;;
+    diagnostics)
+        run_diagnostics
+        ;;
+    export)
+        export_config
+        ;;
+    import)
+        if [[ -n "$2" ]]; then
+            import_config "$2"
+        else
+            echo -e "${RED}Error: Please specify a configuration file${NC}"
+            echo "Usage: $0 import <config_file>"
+            exit 1
+        fi
+        ;;
+    backup)
+        create_backup
+        ;;
+    restore)
+        if [[ -n "$2" ]]; then
+            restore_backup "$2"
+        else
+            echo -e "${RED}Error: Please specify a backup file${NC}"
+            echo "Usage: $0 restore <backup_file>"
+            exit 1
+        fi
+        ;;
+    clean)
+        clean_logs "${2:-7}"
+        ;;
+    update)
+        update_script
+        ;;
+    version)
+        show_version
+        ;;
+    help|--help|-h)
+        show_help
+        ;;
+    *)
+        echo -e "${RED}Unknown option: $1${NC}"
+        echo "Use '$0 help' for usage information"
+        exit 1
+        ;;
+esac
+
+# Exit with proper code
+exit $?
