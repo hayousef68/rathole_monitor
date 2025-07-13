@@ -48,7 +48,9 @@ install_dependencies() {
     
     if command -v apt-get &> /dev/null; then
         apt-get update -qq
-        apt-get install -y python3 python3-pip git curl wget
+        apt-get install -y python3 python3-pip python3-venv git curl wget
+        # Try to install system packages first
+        apt-get install -y python3-flask python3-requests python3-psutil 2>/dev/null || true
     elif command -v yum &> /dev/null; then
         yum install -y python3 python3-pip git curl wget
     elif command -v apk &> /dev/null; then
@@ -81,14 +83,33 @@ setup_project() {
     git clone "$REPO_URL" "$PROJECT_DIR"
     cd "$PROJECT_DIR"
     
-    # Install Python dependencies
+    # Try to install Python dependencies
+    log "Installing Python dependencies..."
+    
+    # Method 1: Try system packages first
+    if command -v apt-get &> /dev/null; then
+        apt-get install -y python3-flask python3-requests python3-psutil 2>/dev/null || true
+    fi
+    
+    # Method 2: Try with requirements.txt
     if [ -f "requirements.txt" ]; then
-        log "Installing Python dependencies..."
-        python3 -m pip install -r requirements.txt --quiet
+        # Try with virtual environment first
+        if python3 -m venv venv 2>/dev/null; then
+            source venv/bin/activate
+            pip install -r requirements.txt --quiet
+        else
+            # Fallback to system-wide with break-system-packages
+            python3 -m pip install -r requirements.txt --quiet --break-system-packages 2>/dev/null || true
+        fi
     else
-        # Install common dependencies
-        log "Installing common Python packages..."
-        python3 -m pip install flask requests psutil --quiet
+        # Method 3: Install common packages
+        if python3 -m venv venv 2>/dev/null; then
+            source venv/bin/activate
+            pip install flask requests psutil --quiet
+        else
+            # Fallback to system-wide with break-system-packages
+            python3 -m pip install flask requests psutil --quiet --break-system-packages 2>/dev/null || true
+        fi
     fi
 }
 
@@ -133,8 +154,15 @@ start_app() {
         exit 1
     fi
     
+    # Determine Python executable
+    if [ -f "venv/bin/python3" ]; then
+        PYTHON_CMD="venv/bin/python3"
+    else
+        PYTHON_CMD="python3"
+    fi
+    
     # Start in background
-    nohup python3 app.py > "$LOG_FILE" 2>&1 &
+    nohup $PYTHON_CMD app.py > "$LOG_FILE" 2>&1 &
     APP_PID=$!
     
     # Wait a moment and check if process is running
@@ -157,12 +185,19 @@ start_multiple() {
     local instances=${1:-3}
     log "Starting $instances concurrent instances..."
     
+    # Determine Python executable
+    if [ -f "$PROJECT_DIR/venv/bin/python3" ]; then
+        PYTHON_CMD="$PROJECT_DIR/venv/bin/python3"
+    else
+        PYTHON_CMD="python3"
+    fi
+    
     for i in $(seq 1 $instances); do
         local port=$((DEFAULT_PORT + i - 1))
         log "Starting instance $i on port $port..."
         
         cd "$PROJECT_DIR"
-        PORT=$port nohup python3 app.py > "/var/log/rathole_monitor_$i.log" 2>&1 &
+        PORT=$port nohup $PYTHON_CMD app.py > "/var/log/rathole_monitor_$i.log" 2>&1 &
         local pid=$!
         
         sleep 1
