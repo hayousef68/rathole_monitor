@@ -1,169 +1,4 @@
-# Function to analyze error patterns and determine if restart is needed
-analyze_error_patterns() {
-    local service_name=$1
-    local time_range="${ERROR_CHECK_PERIOD:-5 minutes ago}"
-    
-    # Get all logs (not just errors) for pattern analysis
-    local all_logs=$(journalctl -u "$service_name" --since "$time_range" --no-pager -q 2>/dev/null)
-    
-    if [[ -z "$all_logs" ]]; then
-        return 0  # No logs, assume healthy
-    fi
-    
-    local restart_indicators=0
-    local connection_attempts=0
-    local successful_connections=0
-    local failed_connections=0
-    
-    # Analyze logs for patterns
-    while IFS= read -r line; do
-        if [[ -n "$line" ]]; then
-            # Count successful connections
-            if echo "$line" | grep -qi "control channel established\|connection established\|client connected\|server connected"; then
-                successful_connections=$((successful_connections + 1))
-            fi
-            
-            # Count connection attempts
-            if echo "$line" | grep -qi "attempting\|trying\|connecting"; then
-                connection_attempts=$((connection_attempts + 1))
-            fi
-            
-            # Count failed connections (only if not in ignored list)
-            if echo "$line" | grep -qi "failed\|error\|warning"; then
-                if is_critical_error "$line"; then
-                    failed_connections=$((failed_connections + 1))
-                    restart_indicators=$((restart_indicators + 1))
-                fi
-            fi
-            
-            # Check for service restart indicators
-            if echo "$line" | grep -qi "service.*stopped\|service.*failed\|process.*exited\|starting.*service"; then
-                restart_indicators=$((restart_indicators + 1))
-            fi
-        fi
-    done <<< "$all_logs"
-    
-    # Calculate connection success rate
-    local success_rate=0
-    if [[ $connection_attempts -gt 0 ]]; then
-        success_rate=$(( (successful_connections * 100) / connection_attempts ))
-    fi
-    
-    log_message "INFO" "Service $service_name analysis: $successful_connections successful, $failed_connections failed, $success_rate% success rate"
-    
-    # Decision logic for restart
-    local should_restart=false
-    
-    # Restart if too many critical errors
-    if [[ $restart_indicators -ge $MIN_CRITICAL_ERRORS ]]; then
-        log_message "WARNING" "Service $service_name has $restart_indicators critical errors (threshold: $MIN_CRITICAL_ERRORS)"
-        should_restart=true
-    fi
-    
-    # Restart if success rate is too low (less than 50% and some attempts made)
-    if [[ $connection_attempts -ge 3 && $success_rate -lt 50 ]]; then
-        log_message "WARNING" "Service $service_name has low success rate: $success_rate% (attempts: $connection_attempts)"
-        should_restart=true
-        # Return decision
-    if [[ "$should_restart" == "true" ]]; then
-        return 1  # Needs restart
-    else
-        return 0  # No restart needed
-    fi
-}
-
-# Function to check error frequency
-check_error_frequency() {
-    local service_name=$1
-    local time_range="${ERROR_CHECK_PERIOD:-5 minutes ago}"
-    
-    # Count errors in the specified time range
-    local error_count=$(journalctl -u "$service_name" --since "$time_range" -p warning --no-pager -q 2>/dev/null | wc -l)
-    
-    log_message "INFO" "Service $service_name has $error_count errors in the last $ERROR_CHECK_PERIOD"
-    
-    # Check if error frequency exceeds threshold
-    if [[ $error_count -gt $ERROR_FREQUENCY_THRESHOLD ]]; then
-        log_message "WARNING" "Service $service_name has high error frequency: $error_count errors (threshold: $ERROR_FREQUENCY_THRESHOLD)"
-        return 1
-    else
-        return 0
-    fi
-}
-
-# Function to create log directory if it doesn't exist
-create_log_directory() {
-    local log_dir=$(dirname "$LOG_FILE")
-    if [[ ! -d "$log_dir" ]]; then
-        mkdir -p "$log_dir"
-        log_message "INFO" "Created log directory: $log_dir"
-    fi
-}
-
-# Function to rotate log file if it gets too large
-rotate_log_file() {
-    local max_size=$((10 * 1024 * 1024))  # 10MB
-    
-    if [[ -f "$LOG_FILE" ]]; then
-        local file_size=$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
-        
-        if [[ $file_size -gt $max_size ]]; then
-            mv "$LOG_FILE" "${LOG_FILE}.old"
-            log_message "INFO" "Log file rotated due to size limit"
-        fi
-    fi
-}
-
-# Function to validate configuration
-validate_configuration() {
-    # Check if required commands are available
-    local required_commands=("systemctl" "journalctl" "netstat" "grep" "awk")
-    
-    for cmd in "${required_commands[@]}"; do
-        if ! command -v "$cmd" &> /dev/null; then
-            log_message "ERROR" "Required command not found: $cmd"
-            return 1
-        fi
-    done
-    
-    # Check if running as root (required for systemctl operations)
-    if [[ $EUID -ne 0 ]]; then
-        log_message "WARNING" "Not running as root. Some operations may fail."
-    fi
-    
-    # Validate numeric configuration values
-    if ! [[ "$CHECK_INTERVAL" =~ ^[0-9]+$ ]] || [[ $CHECK_INTERVAL -lt 60 ]]; then
-        log_message "WARNING" "Invalid CHECK_INTERVAL: $CHECK_INTERVAL. Using default: 300"
-        CHECK_INTERVAL=300
-    fi
-    
-    if ! [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]] || [[ $MAX_RETRIES -lt 1 ]]; then
-        log_message "WARNING" "Invalid MAX_RETRIES: $MAX_RETRIES. Using default: 3"
-        MAX_RETRIES=3
-    fi
-    
-    if ! [[ "$MIN_CRITICAL_ERRORS" =~ ^[0-9]+$ ]] || [[ $MIN_CRITICAL_ERRORS -lt 1 ]]; then
-        log_message "WARNING" "Invalid MIN_CRITICAL_ERRORS: $MIN_CRITICAL_ERRORS. Using default: 1"
-        MIN_CRITICAL_ERRORS=1
-    fi
-    
-    return 0
-}
-
-# Function to cleanup on exit
-cleanup() {
-    log_message "INFO" "Rathole monitor stopping..."
-    exit 0
-}
-
-# Set up signal handlers
-trap cleanup SIGINT SIGTERM
-
-# Initialize
-create_log_directory
-validate_configuration
-rotate_log_file
-    fi#!/bin/bash
+#!/bin/bash
 
 # Rathole Tunnel Monitor Script
 # Automatically monitors and restarts Rathole tunnel services
@@ -178,67 +13,16 @@ MIN_CRITICAL_ERRORS=1  # Minimum critical errors to trigger restart
 ERROR_FREQUENCY_THRESHOLD=5  # Max errors per time period
 ENABLE_SMART_ERROR_DETECTION=true  # Enable smart error filtering
 
+# Rathole configuration paths
+RATHOLE_CONFIG_DIR="/etc/rathole"
+RATHOLE_SERVICE_PREFIX="rathole"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
-
-# Function to log messages
-log_message() {
-    local level=$1
-    local message=$2
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo -e "${timestamp} [${level}] ${message}" | tee -a "$LOG_FILE"
-}
-
-# Function to check if a port is listening
-check_port() {
-    local port=$1
-    if netstat -tuln | grep -q ":${port} "; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Function to extract ports from service name or config
-get_service_ports() {
-    local service_name=$1
-    local config_file=""
-    config_file=$(systemctl show "$service_name" --property=ExecStart --value | grep -o '/[^[:space:]]*\.toml' | head -1)
-    if [[ -f "$config_file" ]]; then
-        # استخراج پورت‌ها از bind_addr = "0.0.0.0:PORT"
-        grep -Eo ':[0-9]+' "$config_file" | tr -d ':' | sort -u
-    else
-        # روش جایگزین: تشخیص پورت از نام سرویس (در صورتی که عدد داشته باشه)
-        echo "$service_name" | grep -o '[0-9]\+' | tail -1
-    fi
-}
-    # Try to find config file from service definition
-    config_file=$(systemctl show "$service_name" --property=ExecStart --value | grep -o '/[^[:space:]]*\.toml' | head -1)
-    
-    if [[ -f "$config_file" ]]; then
-        # Extract ports from TOML config file
-        grep -E "bind_addr.*:([0-9]+)" "$config_file" | grep -o '[0-9]\+' | sort -u
-    else
-        # Try to extract port from service name (e.g., rathole-kharej -> rathole-kharej)
-        echo "$service_name" | grep -o '[0-9]\+' | tail -1
-    fi
-}
-
-# Function to check service status
-check_service_status() {
-    local service_name=$1
-    local status=$(systemctl is-active "$service_name")
-    
-    if [[ "$status" == "active" ]]; then
-        return 0
-    else
-        return 1
-    fi
-}
 
 # List of error patterns that should be ignored (not critical)
 IGNORED_ERRORS=(
@@ -1082,20 +866,141 @@ CRITICAL_ERRORS=(
     "SYNCED"
 )
 
+# Function to log messages with proper format
+log_message() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # Ensure log directory exists
+    mkdir -p "$(dirname "$LOG_FILE")"
+    
+    # Write to log file and display on screen
+    echo -e "${timestamp} [${level}] ${message}" | tee -a "$LOG_FILE"
+}
+
+# Function to check if a port is listening
+check_port() {
+    local port="$1"
+    
+    # Validate port number
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        return 1
+    fi
+    
+    # Check if port is listening using multiple methods
+    if command -v netstat >/dev/null 2>&1; then
+        if netstat -tuln 2>/dev/null | grep -q ":${port} "; then
+            return 0
+        fi
+    fi
+    
+    if command -v ss >/dev/null 2>&1; then
+        if ss -tuln 2>/dev/null | grep -q ":${port} "; then
+            return 0
+        fi
+    fi
+    
+    # Fallback to lsof if available
+    if command -v lsof >/dev/null 2>&1; then
+        if lsof -i ":${port}" -sTCP:LISTEN >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    
+    return 1
+}
+
+# Function to extract ports from rathole config file
+get_service_ports() {
+    local service_name="$1"
+    local config_file=""
+    local ports=""
+    
+    # Try to find config file from service definition
+    if command -v systemctl >/dev/null 2>&1; then
+        local exec_start=$(systemctl show "$service_name" --property=ExecStart --value 2>/dev/null)
+        config_file=$(echo "$exec_start" | grep -oE '/[^[:space:]]*\.toml' | head -1)
+    fi
+    
+    # If config file not found in service, try common locations
+    if [[ ! -f "$config_file" ]]; then
+        local service_base=$(echo "$service_name" | sed 's/\.service$//')
+        
+        # Check common config locations
+        for possible_config in \
+            "${RATHOLE_CONFIG_DIR}/${service_base}.toml" \
+            "/etc/rathole/${service_base}.toml" \
+            "/opt/rathole/${service_base}.toml" \
+            "/usr/local/etc/rathole/${service_base}.toml"; do
+            
+            if [[ -f "$possible_config" ]]; then
+                config_file="$possible_config"
+                break
+            fi
+        done
+    fi
+    
+    if [[ -f "$config_file" ]]; then
+        # Extract ports from TOML config file
+        # Look for bind_addr patterns like "0.0.0.0:2086" or "127.0.0.1:8080"
+        ports=$(grep -E "(bind_addr|remote_addr).*:[0-9]+" "$config_file" 2>/dev/null | \
+                grep -oE '[0-9]+' | sort -u | tr '\n' ' ')
+        
+        # Also check for port definitions in different formats
+        if [[ -z "$ports" ]]; then
+            ports=$(grep -E "port.*=.*[0-9]+" "$config_file" 2>/dev/null | \
+                    grep -oE '[0-9]+' | sort -u | tr '\n' ' ')
+        fi
+    fi
+    
+    # Clean up and return ports
+    echo "$ports" | tr -s ' ' | sed 's/^ *//;s/ *$//'
+}
+
+# Function to check service status with proper error handling
+check_service_status() {
+    local service_name="$1"
+    
+    if ! command -v systemctl >/dev/null 2>&1; then
+        log_message "ERROR" "systemctl command not found"
+        return 1
+    fi
+    
+    local status=$(systemctl is-active "$service_name" 2>/dev/null)
+    
+    case "$status" in
+        active)
+            return 0
+            ;;
+        inactive|failed|dead)
+            return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 # Function to check if an error is critical
 is_critical_error() {
     local error_line="$1"
     
+    # Skip empty lines
+    if [[ -z "$error_line" ]]; then
+        return 1
+    fi
+    
     # Check if error matches any critical pattern
     for pattern in "${CRITICAL_ERRORS[@]}"; do
-        if echo "$error_line" | grep -qi "$pattern"; then
+        if [[ -n "$pattern" ]] && echo "$error_line" | grep -qi "$pattern"; then
             return 0  # Critical error found
         fi
     done
     
     # Check if error matches any ignored pattern (non-critical)
     for pattern in "${IGNORED_ERRORS[@]}"; do
-        if echo "$error_line" | grep -qi "$pattern"; then
+        if [[ -n "$pattern" ]] && echo "$error_line" | grep -qi "$pattern"; then
             return 1  # Non-critical error, ignore it
         fi
     done
@@ -1106,8 +1011,14 @@ is_critical_error() {
 
 # Function to check if service has recent critical errors
 check_service_errors() {
-    local service_name=$1
+    local service_name="$1"
     local time_range="${ERROR_CHECK_PERIOD:-5 minutes ago}"
+    
+    # Check if journalctl is available
+    if ! command -v journalctl >/dev/null 2>&1; then
+        log_message "WARNING" "journalctl not available, skipping error check"
+        return 0
+    fi
     
     # Get recent error/warning logs
     local error_logs=$(journalctl -u "$service_name" --since "$time_range" -p warning --no-pager -q 2>/dev/null)
@@ -1135,8 +1046,90 @@ check_service_errors() {
     
     log_message "INFO" "Service $service_name: $total_error_count total errors, $critical_error_count critical errors"
     
-    # Only fail if we have critical errors
-    if [[ $critical_error_count -gt 0 ]]; then
+    # Only fail if we have critical errors above threshold
+    if [[ $critical_error_count -ge $MIN_CRITICAL_ERRORS ]]; then
+        return 1
+    else
+        return 0
+    fi
+}
+
+# Function to analyze error patterns and determine if restart is needed
+analyze_error_patterns() {
+    local service_name="$1"
+    local time_range="${ERROR_CHECK_PERIOD:-5 minutes ago}"
+    
+    # Check if journalctl is available
+    if ! command -v journalctl >/dev/null 2>&1; then
+        log_message "WARNING" "journalctl not available, skipping pattern analysis"
+        return 0
+    fi
+    
+    # Get all logs (not just errors) for pattern analysis
+    local all_logs=$(journalctl -u "$service_name" --since "$time_range" --no-pager -q 2>/dev/null)
+    
+    if [[ -z "$all_logs" ]]; then
+        return 0  # No logs, assume healthy
+    fi
+    
+    local restart_indicators=0
+    local connection_attempts=0
+    local successful_connections=0
+    local failed_connections=0
+    
+    # Analyze logs for patterns
+    while IFS= read -r line; do
+        if [[ -n "$line" ]]; then
+            # Count successful connections
+            if echo "$line" | grep -qi "control channel established\|connection established\|client connected\|server connected"; then
+                successful_connections=$((successful_connections + 1))
+            fi
+            
+            # Count connection attempts
+            if echo "$line" | grep -qi "attempting\|trying\|connecting"; then
+                connection_attempts=$((connection_attempts + 1))
+            fi
+            
+            # Count failed connections (only if not in ignored list)
+            if echo "$line" | grep -qi "failed\|error\|warning"; then
+                if is_critical_error "$line"; then
+                    failed_connections=$((failed_connections + 1))
+                    restart_indicators=$((restart_indicators + 1))
+                fi
+            fi
+            
+            # Check for service restart indicators
+            if echo "$line" | grep -qi "service.*stopped\|service.*failed\|process.*exited\|starting.*service"; then
+                restart_indicators=$((restart_indicators + 1))
+            fi
+        fi
+    done <<< "$all_logs"
+    
+    # Calculate connection success rate
+    local success_rate=0
+    if [[ $connection_attempts -gt 0 ]]; then
+        success_rate=$(( (successful_connections * 100) / connection_attempts ))
+    fi
+    
+    log_message "INFO" "Service $service_name analysis: $successful_connections successful, $failed_connections failed, $success_rate% success rate"
+    
+    # Decision logic for restart
+    local should_restart=false
+    
+    # Restart if too many critical errors
+    if [[ $restart_indicators -ge $MIN_CRITICAL_ERRORS ]]; then
+        log_message "WARNING" "Service $service_name has $restart_indicators critical errors (threshold: $MIN_CRITICAL_ERRORS)"
+        should_restart=true
+    fi
+    
+    # Restart if success rate is too low (less than 50% and some attempts made)
+    if [[ $connection_attempts -ge 3 && $success_rate -lt 50 ]]; then
+        log_message "WARNING" "Service $service_name has low success rate: $success_rate% (attempts: $connection_attempts)"
+        should_restart=true
+    fi
+    
+    # Return appropriate exit code
+    if [[ "$should_restart" == "true" ]]; then
         return 1
     else
         return 0
@@ -1145,21 +1138,29 @@ check_service_errors() {
 
 # Function to restart service with retries
 restart_service() {
-    local service_name=$1
+    local service_name="$1"
     local retry_count=0
     
     log_message "WARNING" "Attempting to restart service: $service_name"
     
     while [[ $retry_count -lt $MAX_RETRIES ]]; do
-        systemctl restart "$service_name"
-        sleep $RETRY_DELAY
-        
-        if check_service_status "$service_name"; then
-            log_message "INFO" "Successfully restarted service: $service_name"
-            return 0
+        if systemctl restart "$service_name" 2>/dev/null; then
+            sleep $RETRY_DELAY
+            
+            if check_service_status "$service_name"; then
+                log_message "INFO" "Successfully restarted service: $service_name"
+                return 0
+            else
+                log_message "WARNING" "Service $service_name restarted but not active yet"
+            fi
         else
-            retry_count=$((retry_count + 1))
-            log_message "ERROR" "Failed to restart $service_name (attempt $retry_count/$MAX_RETRIES)"
+            log_message "ERROR" "Failed to issue restart command for $service_name"
+        fi
+        
+        retry_count=$((retry_count + 1))
+        log_message "ERROR" "Failed to restart $service_name (attempt $retry_count/$MAX_RETRIES)"
+        
+        if [[ $retry_count -lt $MAX_RETRIES ]]; then
             sleep $RETRY_DELAY
         fi
     done
@@ -1170,14 +1171,23 @@ restart_service() {
 
 # Function to check tunnel connectivity
 check_tunnel_connectivity() {
-    local service_name=$1
+    local service_name="$1"
     local ports=$(get_service_ports "$service_name")
     local all_ports_ok=true
     
+    if [[ -z "$ports" ]]; then
+        log_message "DEBUG" "No ports found for service $service_name, skipping port check"
+        return 0
+    fi
+    
+    log_message "DEBUG" "Checking ports for $service_name: $ports"
+    
     for port in $ports; do
-        if ! check_port "$port"; then
+        if [[ -n "$port" ]] && ! check_port "$port"; then
             log_message "WARNING" "Port $port is not listening for service $service_name"
             all_ports_ok=false
+        else
+            log_message "DEBUG" "Port $port is listening for service $service_name"
         fi
     done
     
@@ -1190,7 +1200,7 @@ check_tunnel_connectivity() {
 
 # Function to monitor single service
 monitor_service() {
-    local service_name=$1
+    local service_name="$1"
     local needs_restart=false
     
     log_message "INFO" "Checking service: $service_name"
@@ -1201,14 +1211,20 @@ monitor_service() {
         needs_restart=true
     fi
     
-    # Check for recent errors
-    if ! check_service_errors "$service_name"; then
-        log_message "WARNING" "Service $service_name has recent errors"
+    # Check for recent errors (only if service is active)
+    if [[ "$needs_restart" == "false" ]] && ! check_service_errors "$service_name"; then
+        log_message "WARNING" "Service $service_name has recent critical errors"
         needs_restart=true
     fi
     
-    # Check port connectivity
-    if ! check_tunnel_connectivity "$service_name"; then
+    # Advanced pattern analysis (only if service is active)
+    if [[ "$needs_restart" == "false" ]] && [[ "$ENABLE_SMART_ERROR_DETECTION" == "true" ]] && ! analyze_error_patterns "$service_name"; then
+        log_message "WARNING" "Service $service_name failed pattern analysis"
+        needs_restart=true
+    fi
+    
+    # Check port connectivity (only if service is active)
+    if [[ "$needs_restart" == "false" ]] && ! check_tunnel_connectivity "$service_name"; then
         log_message "WARNING" "Service $service_name has connectivity issues"
         needs_restart=true
     fi
@@ -1223,17 +1239,31 @@ monitor_service() {
 
 # Function to get all rathole services
 get_rathole_services() {
-    systemctl list-units --type=service --state=loaded | grep -E "rathole.*\.service" | awk '{print $1}'
+    if ! command -v systemctl >/dev/null 2>&1; then
+        log_message "ERROR" "systemctl command not found"
+        return 1
+    fi
+    
+    # Find all services that start with rathole prefix
+    systemctl list-units --type=service --state=loaded --no-legend 2>/dev/null | \
+    awk '{print $1}' | \
+    grep -E "^${RATHOLE_SERVICE_PREFIX}.*\.service$" | \
+    sort
 }
 
 # Function to display service status
 display_status() {
-    local service_name=$1
-    local status=$(systemctl is-active "$service_name")
-    local uptime=$(systemctl show "$service_name" --property=ActiveEnterTimestamp --value | sed 's/.*; //')
+    local service_name="$1"
+    local status=$(systemctl is-active "$service_name" 2>/dev/null)
+    local uptime=""
+    local ports=$(get_service_ports "$service_name")
     
     if [[ "$status" == "active" ]]; then
-        echo -e "${GREEN}✓${NC} $service_name - ${GREEN}Active${NC} (Up: $uptime)"
+        uptime=$(systemctl show "$service_name" --property=ActiveEnterTimestamp --value 2>/dev/null | awk '{print $2, $3}')
+        echo -e "${GREEN}✓${NC} $service_name - ${GREEN}Active${NC} (Since: $uptime)"
+        if [[ -n "$ports" ]]; then
+            echo -e "  ${BLUE}Ports:${NC} $ports"
+        fi
     else
         echo -e "${RED}✗${NC} $service_name - ${RED}$status${NC}"
     fi
@@ -1247,16 +1277,18 @@ main_monitor() {
     local services=$(get_rathole_services)
     
     if [[ -z "$services" ]]; then
-        log_message "WARNING" "No rathole services found"
+        log_message "WARNING" "No rathole services found with prefix: $RATHOLE_SERVICE_PREFIX"
         return 1
     fi
     
     log_message "INFO" "Found rathole services: $(echo $services | tr '\n' ' ')"
     
     # Monitor each service
-    for service in $services; do
-        monitor_service "$service"
-    done
+    while IFS= read -r service; do
+        if [[ -n "$service" ]]; then
+            monitor_service "$service"
+        fi
+    done <<< "$services"
     
     log_message "INFO" "Monitoring cycle completed"
 }
@@ -1269,13 +1301,15 @@ show_status() {
     local services=$(get_rathole_services)
     
     if [[ -z "$services" ]]; then
-        echo -e "${YELLOW}No rathole services found${NC}"
+        echo -e "${YELLOW}No rathole services found with prefix: $RATHOLE_SERVICE_PREFIX${NC}"
         return 1
     fi
     
-    for service in $services; do
-        display_status "$service"
-    done
+    while IFS= read -r service; do
+        if [[ -n "$service" ]]; then
+            display_status "$service"
+        fi
+    done <<< "$services"
     
     echo ""
     echo -e "${BLUE}=== Recent Log Entries ===${NC}"
@@ -1290,6 +1324,12 @@ show_status() {
 run_daemon() {
     log_message "INFO" "Starting Rathole Monitor Daemon (Check interval: ${CHECK_INTERVAL}s)"
     
+    # Create log file if it doesn't exist
+    touch "$LOG_FILE"
+    
+    # Set up signal handlers for graceful shutdown
+    trap 'log_message "INFO" "Received signal, shutting down..."; exit 0' SIGTERM SIGINT
+    
     while true; do
         main_monitor
         sleep $CHECK_INTERVAL
@@ -1299,6 +1339,12 @@ run_daemon() {
 # Function to install as systemd service
 install_service() {
     local script_path=$(realpath "$0")
+    
+    # Check if running as root
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}Error: This function must be run as root${NC}"
+        exit 1
+    fi
     
     cat > /etc/systemd/system/rathole-monitor.service << EOF
 [Unit]
@@ -1311,6 +1357,8 @@ User=root
 ExecStart=$script_path daemon
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -1322,10 +1370,17 @@ EOF
     
     echo -e "${GREEN}Rathole monitor service installed and started${NC}"
     echo "Use 'systemctl status rathole-monitor' to check status"
+    echo "Use 'journalctl -u rathole-monitor -f' to view logs"
 }
 
 # Function to uninstall service
 uninstall_service() {
+    # Check if running as root
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}Error: This function must be run as root${NC}"
+        exit 1
+    fi
+    
     systemctl stop rathole-monitor.service 2>/dev/null
     systemctl disable rathole-monitor.service 2>/dev/null
     rm -f /etc/systemd/system/rathole-monitor.service
@@ -1353,10 +1408,26 @@ show_help() {
     echo "  $0 daemon           # Run continuous monitoring"
     echo "  $0 status           # Show status"
     echo "  $0 install          # Install as service"
+    echo ""
+    echo "Configuration:"
+    echo "  Log file: $LOG_FILE"
+    echo "  Check interval: ${CHECK_INTERVAL}s"
+    echo "  Max retries: $MAX_RETRIES"
+    echo "  Smart error detection: $ENABLE_SMART_ERROR_DETECTION"
+    echo "  Config directory: $RATHOLE_CONFIG_DIR"
+    echo "  Service prefix: $RATHOLE_SERVICE_PREFIX"
 }
 
-# Main script logic
-case "${1:-status}" in
+# Create log directory if it doesn't exist
+mkdir -p "$(dirname "$LOG_FILE")"
+
+# Main script logic with better default handling
+if [[ $# -eq 0 ]]; then
+    show_status
+    exit 0
+fi
+
+case "$1" in
     monitor)
         main_monitor
         ;;
@@ -1376,7 +1447,7 @@ case "${1:-status}" in
         show_help
         ;;
     *)
-        echo "Unknown option: $1"
+        echo -e "${RED}Unknown option: $1${NC}"
         echo "Use '$0 help' for usage information"
         exit 1
         ;;
