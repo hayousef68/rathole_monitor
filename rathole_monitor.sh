@@ -911,49 +911,62 @@ check_port() {
     return 1
 }
 
-# Function to extract ports from rathole config file
 get_service_ports() {
     local service_name="$1"
     local config_file=""
     local ports=""
-    
-    # Try to find config file from service definition
+
+    # Locate the service’s TOML file via ExecStart or common paths
     if command -v systemctl >/dev/null 2>&1; then
-        local exec_start=$(systemctl show "$service_name" --property=ExecStart --value 2>/dev/null)
-        config_file=$(echo "$exec_start" | grep -oE '/[^[:space:]]*\.toml' | head -1)
+        local exec_start
+        exec_start=$(systemctl show "$service_name" --property=ExecStart --value 2>/dev/null)
+        config_file=$(echo "$exec_start" | grep -oE '/[^[:space:]]+\.toml' | head -1)
     fi
-    
-    # If config file not found in service, try common locations
     if [[ ! -f "$config_file" ]]; then
-        local service_base=$(echo "$service_name" | sed 's/\.service$//')
-        
-        # Check common config locations
-        for possible_config in \
+        local service_base=${service_name%.service}
+        for possible in \
             "${RATHOLE_CONFIG_DIR}/${service_base}.toml" \
             "/etc/rathole/${service_base}.toml" \
             "/opt/rathole/${service_base}.toml" \
             "/usr/local/etc/rathole/${service_base}.toml"; do
-            
-            if [[ -f "$possible_config" ]]; then
-                config_file="$possible_config"
-                break
-            fi
+            [[ -f "$possible" ]] && { config_file="$possible"; break; }
         done
     fi
-    
+
     if [[ -f "$config_file" ]]; then
-        # Extract ports from TOML config file
-        # Look for bind_addr patterns like "0.0.0.0:2086" or "127.0.0.1:8080"
-        ports=$(grep -E "(bind_addr|remote_addr).*:[0-9]+" "$config_file" 2>/dev/null | \
-                grep -oE '[0-9]+' | sort -u | tr '\n' ' ')
-        
-        # Also check for port definitions in different formats
+        # First, capture only numbers after ':' (bind_addr/remote_addr)
+        if grep --version 2>&1 | grep -qP 'GNU'; then
+            ports=$(grep -E "(bind_addr|remote_addr).*:[0-9]+" "$config_file" 2>/dev/null \
+                    | grep -oP '(?<=:)[0-9]+' \
+                    | sort -u \
+                    | tr '\n' ' ')
+        else
+            ports=$(grep -E "(bind_addr|remote_addr).*:[0-9]+" "$config_file" 2>/dev/null \
+                    | sed -nE 's/.*:([0-9]+).*/\1/p' \
+                    | sort -u \
+                    | tr '\n' ' ')
+        fi
+
+        # If none found, fall back to explicit port = entries
         if [[ -z "$ports" ]]; then
-            ports=$(grep -E "port.*=.*[0-9]+" "$config_file" 2>/dev/null | \
-                    grep -oE '[0-9]+' | sort -u | tr '\n' ' ')
+            if grep --version 2>&1 | grep -qP 'GNU'; then
+                ports=$(grep -E "port[[:space:]]*=[[:space:]]*[0-9]+" "$config_file" 2>/dev/null \
+                        | grep -oP '(?<=port[[:space:]]*=[[:space:]]*)[0-9]+' \
+                        | sort -u \
+                        | tr '\n' ' ')
+            else
+                ports=$(grep -E "port[[:space:]]*=[[:space:]]*[0-9]+" "$config_file" 2>/dev/null \
+                        | sed -nE 's/.*port[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' \
+                        | sort -u \
+                        | tr '\n' ' ')
+            fi
         fi
     fi
-    
+
+    # Trim and echo
+    echo "$ports" | tr -s ' ' | sed 's/^ *//;s/ *$//'
+}
+
     # Clean up and return ports
     echo "$ports" | tr -s ' ' | sed 's/^ *//;s/ *$//'
 }
