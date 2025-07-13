@@ -1237,12 +1237,20 @@ monitor_service() {
     fi
 }
 
-# Function to get all rathole services
+# Function to get all rathole services (excluding the monitor itself)
 get_rathole_services() {
     if ! command -v systemctl >/dev/null 2>&1; then
         log_message "ERROR" "systemctl command not found"
         return 1
     fi
+
+    systemctl list-units --type=service --state=loaded --no-legend 2>/dev/null | \
+    awk '{print $1}' | \
+    grep -E "^${RATHOLE_SERVICE_PREFIX}.*\.service$" | \
+    grep -v "^rathole-monitor\.service$" | \
+    sort
+}
+
     
     # Find all services that start with rathole prefix
     systemctl list-units --type=service --state=loaded --no-legend 2>/dev/null | \
