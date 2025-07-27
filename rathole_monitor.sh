@@ -883,27 +883,41 @@ log_message() {
 check_port() {
     local port="$1"
     
-    # Validate port number
+    # اعتبارسنجی شماره پورت
     if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
         return 1
     fi
     
-    # Check if port is listening using multiple methods
+    # بررسی پورت با استفاده از روش‌های مختلف
+    # روش 1: استفاده از netstat
     if command -v netstat >/dev/null 2>&1; then
-        if netstat -tuln 2>/dev/null | grep -q ":${port} "; then
+        if netstat -tln 2>/dev/null | grep -q ":${port} "; then
             return 0
         fi
     fi
     
+    # روش 2: استفاده از ss (مدرن‌تر از netstat)
     if command -v ss >/dev/null 2>&1; then
-        if ss -tuln 2>/dev/null | grep -q ":${port} "; then
+        if ss -tln 2>/dev/null | grep -q ":${port} "; then
             return 0
         fi
     fi
     
-    # Fallback to lsof if available
+    # روش 3: استفاده از lsof
     if command -v lsof >/dev/null 2>&1; then
         if lsof -i ":${port}" -sTCP:LISTEN >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    
+    # روش 4: استفاده از bash برای تست اتصال
+    if timeout 2 bash -c "</dev/tcp/127.0.0.1/${port}" 2>/dev/null; then
+        return 0
+    fi
+    
+    # روش 5: استفاده از nc (netcat) اگر موجود باشد
+    if command -v nc >/dev/null 2>&1; then
+        if nc -z 127.0.0.1 "$port" 2>/dev/null; then
             return 0
         fi
     fi
@@ -911,62 +925,49 @@ check_port() {
     return 1
 }
 
+# Function to extract ports from rathole config file
 get_service_ports() {
     local service_name="$1"
     local config_file=""
     local ports=""
-
-    # Locate the service’s TOML file via ExecStart or common paths
+    
+    # Try to find config file from service definition
     if command -v systemctl >/dev/null 2>&1; then
-        local exec_start
-        exec_start=$(systemctl show "$service_name" --property=ExecStart --value 2>/dev/null)
-        config_file=$(echo "$exec_start" | grep -oE '/[^[:space:]]+\.toml' | head -1)
+        local exec_start=$(systemctl show "$service_name" --property=ExecStart --value 2>/dev/null)
+        config_file=$(echo "$exec_start" | grep -oE '/[^[:space:]]*\.toml' | head -1)
     fi
+    
+    # If config file not found in service, try common locations
     if [[ ! -f "$config_file" ]]; then
-        local service_base=${service_name%.service}
-        for possible in \
+        local service_base=$(echo "$service_name" | sed 's/\.service$//')
+        
+        # Check common config locations
+        for possible_config in \
             "${RATHOLE_CONFIG_DIR}/${service_base}.toml" \
             "/etc/rathole/${service_base}.toml" \
             "/opt/rathole/${service_base}.toml" \
             "/usr/local/etc/rathole/${service_base}.toml"; do
-            [[ -f "$possible" ]] && { config_file="$possible"; break; }
+            
+            if [[ -f "$possible_config" ]]; then
+                config_file="$possible_config"
+                break
+            fi
         done
     fi
-
+    
     if [[ -f "$config_file" ]]; then
-        # First, capture only numbers after ':' (bind_addr/remote_addr)
-        if grep --version 2>&1 | grep -qP 'GNU'; then
-            ports=$(grep -E "(bind_addr|remote_addr).*:[0-9]+" "$config_file" 2>/dev/null \
-                    | grep -oP '(?<=:)[0-9]+' \
-                    | sort -u \
-                    | tr '\n' ' ')
-        else
-            ports=$(grep -E "(bind_addr|remote_addr).*:[0-9]+" "$config_file" 2>/dev/null \
-                    | sed -nE 's/.*:([0-9]+).*/\1/p' \
-                    | sort -u \
-                    | tr '\n' ' ')
-        fi
-
-        # If none found, fall back to explicit port = entries
+        # Extract ports from TOML config file
+        # Look for bind_addr patterns like "0.0.0.0:2086" or "127.0.0.1:8080"
+        ports=$(grep -E "(bind_addr|remote_addr).*:[0-9]+" "$config_file" 2>/dev/null | \
+                grep -oE '[0-9]+' | sort -u | tr '\n' ' ')
+        
+        # Also check for port definitions in different formats
         if [[ -z "$ports" ]]; then
-            if grep --version 2>&1 | grep -qP 'GNU'; then
-                ports=$(grep -E "port[[:space:]]*=[[:space:]]*[0-9]+" "$config_file" 2>/dev/null \
-                        | grep -oP '(?<=port[[:space:]]*=[[:space:]]*)[0-9]+' \
-                        | sort -u \
-                        | tr '\n' ' ')
-            else
-                ports=$(grep -E "port[[:space:]]*=[[:space:]]*[0-9]+" "$config_file" 2>/dev/null \
-                        | sed -nE 's/.*port[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' \
-                        | sort -u \
-                        | tr '\n' ' ')
-            fi
+            ports=$(grep -E "port.*=.*[0-9]+" "$config_file" 2>/dev/null | \
+                    grep -oE '[0-9]+' | sort -u | tr '\n' ' ')
         fi
     fi
-
-    # Trim and echo
-    echo "$ports" | tr -s ' ' | sed 's/^ *//;s/ *$//'
-}
-
+    
     # Clean up and return ports
     echo "$ports" | tr -s ' ' | sed 's/^ *//;s/ *$//'
 }
@@ -981,15 +982,37 @@ check_service_status() {
     fi
     
     local status=$(systemctl is-active "$service_name" 2>/dev/null)
+    local enabled=$(systemctl is-enabled "$service_name" 2>/dev/null)
     
     case "$status" in
         active)
-            return 0
+            # بررسی اضافی: آیا سرویس واقعاً در حال اجرا است؟
+            local main_pid=$(systemctl show "$service_name" --property=MainPID --value 2>/dev/null)
+            if [[ "$main_pid" != "0" ]] && kill -0 "$main_pid" 2>/dev/null; then
+                return 0
+            else
+                log_message "WARNING" "Service $service_name shows active but process not found"
+                return 1
+            fi
             ;;
-        inactive|failed|dead)
+        activating)
+            log_message "INFO" "Service $service_name is starting up"
+            return 1
+            ;;
+        deactivating)
+            log_message "INFO" "Service $service_name is shutting down"
+            return 1
+            ;;
+        inactive)
+            log_message "DEBUG" "Service $service_name is inactive"
+            return 1
+            ;;
+        failed)
+            log_message "ERROR" "Service $service_name has failed"
             return 1
             ;;
         *)
+            log_message "WARNING" "Service $service_name has unknown status: $status"
             return 1
             ;;
     esac
@@ -1156,29 +1179,75 @@ restart_service() {
     
     log_message "WARNING" "Attempting to restart service: $service_name"
     
+    # بررسی وضعیت فعلی سرویس
+    local current_status=$(systemctl is-active "$service_name" 2>/dev/null)
+    log_message "INFO" "Current status of $service_name: $current_status"
+    
     while [[ $retry_count -lt $MAX_RETRIES ]]; do
-        if systemctl restart "$service_name" 2>/dev/null; then
-            sleep $RETRY_DELAY
-            
-            if check_service_status "$service_name"; then
-                log_message "INFO" "Successfully restarted service: $service_name"
-                return 0
-            else
-                log_message "WARNING" "Service $service_name restarted but not active yet"
-            fi
-        else
-            log_message "ERROR" "Failed to issue restart command for $service_name"
+        retry_count=$((retry_count + 1))
+        log_message "INFO" "Restart attempt $retry_count/$MAX_RETRIES for $service_name"
+        
+        # توقف سرویس اگر در حال اجرا است
+        if [[ "$current_status" == "active" ]] || [[ "$current_status" == "activating" ]]; then
+            log_message "INFO" "Stopping service $service_name first"
+            systemctl stop "$service_name" 2>/dev/null
+            sleep 2
         fi
         
-        retry_count=$((retry_count + 1))
-        log_message "ERROR" "Failed to restart $service_name (attempt $retry_count/$MAX_RETRIES)"
+        # شروع مجدد سرویس
+        if systemctl start "$service_name" 2>/dev/null; then
+            log_message "INFO" "Start command issued for $service_name"
+            
+            # انتظار برای فعال شدن سرویس
+            local wait_count=0
+            local max_wait=30  # 30 ثانیه انتظار
+            
+            while [[ $wait_count -lt $max_wait ]]; do
+                sleep 1
+                wait_count=$((wait_count + 1))
+                
+                local new_status=$(systemctl is-active "$service_name" 2>/dev/null)
+                
+                if [[ "$new_status" == "active" ]]; then
+                    # بررسی اضافی: آیا پورت‌ها باز شده‌اند؟
+                    sleep 2  # کمی انتظار اضافی برای باز شدن پورت‌ها
+                    
+                    if check_tunnel_connectivity "$service_name"; then
+                        log_message "INFO" "Successfully restarted service: $service_name"
+                        return 0
+                    else
+                        log_message "WARNING" "Service $service_name restarted but connectivity check failed"
+                    fi
+                elif [[ "$new_status" == "failed" ]]; then
+                    log_message "ERROR" "Service $service_name failed to start"
+                    break
+                fi
+            done
+            
+            if [[ $wait_count -ge $max_wait ]]; then
+                log_message "ERROR" "Timeout waiting for $service_name to become active"
+            fi
+        else
+            log_message "ERROR" "Failed to issue start command for $service_name"
+        fi
         
+        # انتظار قبل از تلاش مجدد
         if [[ $retry_count -lt $MAX_RETRIES ]]; then
+            log_message "INFO" "Waiting ${RETRY_DELAY}s before retry..."
             sleep $RETRY_DELAY
         fi
     done
     
     log_message "ERROR" "Failed to restart $service_name after $MAX_RETRIES attempts"
+    
+    # نمایش لاگ‌های خطا برای تشخیص مشکل
+    if command -v journalctl >/dev/null 2>&1; then
+        log_message "ERROR" "Recent error logs for $service_name:"
+        journalctl -u "$service_name" --since "1 minute ago" --no-pager -q | tail -5 | while read -r line; do
+            log_message "ERROR" "  $line"
+        done
+    fi
+    
     return 1
 }
 
@@ -1187,24 +1256,48 @@ check_tunnel_connectivity() {
     local service_name="$1"
     local ports=$(get_service_ports "$service_name")
     local all_ports_ok=true
+    local working_ports=0
+    local total_ports=0
     
     if [[ -z "$ports" ]]; then
-        log_message "DEBUG" "No ports found for service $service_name, skipping port check"
-        return 0
+        log_message "DEBUG" "No ports found for service $service_name, checking process instead"
+        
+        # اگر پورتی پیدا نشد، حداقل بررسی کنیم که پروسه در حال اجرا است
+        local main_pid=$(systemctl show "$service_name" --property=MainPID --value 2>/dev/null)
+        if [[ "$main_pid" != "0" ]] && kill -0 "$main_pid" 2>/dev/null; then
+            return 0
+        else
+            return 1
+        fi
     fi
     
-    log_message "DEBUG" "Checking ports for $service_name: $ports"
+    log_message "DEBUG" "Checking connectivity for $service_name on ports: $ports"
     
     for port in $ports; do
-        if [[ -n "$port" ]] && ! check_port "$port"; then
-            log_message "WARNING" "Port $port is not listening for service $service_name"
-            all_ports_ok=false
-        else
-            log_message "DEBUG" "Port $port is listening for service $service_name"
+        if [[ -n "$port" ]]; then
+            total_ports=$((total_ports + 1))
+            
+            if check_port "$port"; then
+                log_message "DEBUG" "Port $port is accessible for service $service_name"
+                working_ports=$((working_ports + 1))
+            else
+                log_message "WARNING" "Port $port is not accessible for service $service_name"
+                all_ports_ok=false
+            fi
         fi
     done
     
-    if [[ "$all_ports_ok" == "true" ]]; then
+    # ارزیابی نتایج
+    if [[ $total_ports -eq 0 ]]; then
+        log_message "WARNING" "No valid ports found for $service_name"
+        return 1
+    fi
+    
+    local success_rate=$(( (working_ports * 100) / total_ports ))
+    log_message "INFO" "Port connectivity for $service_name: $working_ports/$total_ports working ($success_rate%)"
+    
+    # اگر حداقل 50% پورت‌ها کار می‌کنند، وضعیت را سالم در نظر بگیریم
+    if [[ $success_rate -ge 50 ]]; then
         return 0
     else
         return 1
@@ -1250,44 +1343,126 @@ monitor_service() {
     fi
 }
 
-# Function to get all rathole services (excluding the monitor itself)
+# Function to get all rathole services
 get_rathole_services() {
     if ! command -v systemctl >/dev/null 2>&1; then
         log_message "ERROR" "systemctl command not found"
         return 1
     fi
-
-    systemctl list-units --type=service --state=loaded --no-legend 2>/dev/null | \
-    awk '{print $1}' | \
-    grep -E "^${RATHOLE_SERVICE_PREFIX}.*\.service$" | \
-    grep -v "^rathole-monitor\.service$" | \
-    sort
-}
-
     
-    # Find all services that start with rathole prefix
-    systemctl list-units --type=service --state=loaded --no-legend 2>/dev/null | \
-    awk '{print $1}' | \
-    grep -E "^${RATHOLE_SERVICE_PREFIX}.*\.service$" | \
-    sort
+    local services=""
+    
+    # الگوهای جستجو برای سرویس‌های rathole
+    local search_patterns=(
+        "rathole-kharej*.service"
+        "rathole-iran*.service" 
+        "${RATHOLE_SERVICE_PREFIX}*.service"
+        "rathole*.service"
+    )
+    
+    # روش 1: جستجو در سرویس‌های فعال و غیرفعال با الگوهای مختلف
+    for pattern in "${search_patterns[@]}"; do
+        local found_services=$(systemctl list-units --type=service --all --no-legend 2>/dev/null | \
+                              awk '{print $1}' | \
+                              grep -E "^${pattern//\*/.*}$" | \
+                              sort)
+        if [[ -n "$found_services" ]]; then
+            services="$services"\n'"$found_services"
+        fi
+    done
+    
+    # روش 2: جستجو در فایل‌های سرویس systemd
+    for dir in "/etc/systemd/system" "/lib/systemd/system" "/usr/lib/systemd/system"; do
+        if [[ -d "$dir" ]]; then
+            for pattern in "${search_patterns[@]}"; do
+                local found_files=$(find "$dir" -name "$pattern" -type f 2>/dev/null | \
+                                   xargs -r basename -a 2>/dev/null | \
+                                   sort)
+                if [[ -n "$found_files" ]]; then
+                    services="$services"\n'"$found_files"
+                fi
+            done
+        fi
+    done
+    
+    # پاک‌سازی و حذف تکراری‌ها
+    services=$(echo "$services" | grep -v '^ | sort -u)
+    
+    # فیلتر کردن سرویس‌های معتبر rathole
+    local valid_services=""
+    while IFS= read -r service; do
+        if [[ -n "$service" ]] && [[ "$service" =~ ^rathole-(kharej|iran).*\.service$ || "$service" =~ ^rathole.*\.service$ ]]; then
+            valid_services="$valid_services"\n'"$service"
+        fi
+    done <<< "$services"
+    
+    # نمایش سرویس‌های پیدا شده
+    valid_services=$(echo "$valid_services" | grep -v '^ | sort -u)
+    
+    if [[ -n "$valid_services" ]]; then
+        log_message "DEBUG" "Found rathole services: $(echo "$valid_services" | tr '\n' ' ')"
+    else
+        log_message "DEBUG" "No rathole services found with patterns: ${search_patterns[*]}"
+    fi
+    
+    echo "$valid_services"
 }
 
 # Function to display service status
 display_status() {
     local service_name="$1"
     local status=$(systemctl is-active "$service_name" 2>/dev/null)
+    local enabled=$(systemctl is-enabled "$service_name" 2>/dev/null)
     local uptime=""
+    local memory_usage=""
+    local cpu_usage=""
     local ports=$(get_service_ports "$service_name")
     
+    # دریافت اطلاعات اضافی
     if [[ "$status" == "active" ]]; then
-        uptime=$(systemctl show "$service_name" --property=ActiveEnterTimestamp --value 2>/dev/null | awk '{print $2, $3}')
+        local active_time=$(systemctl show "$service_name" --property=ActiveEnterTimestamp --value 2>/dev/null)
+        uptime=$(date -d "$active_time" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "Unknown")
+        
+        # استفاده از memory و CPU
+        local main_pid=$(systemctl show "$service_name" --property=MainPID --value 2>/dev/null)
+        if [[ "$main_pid" != "0" ]] && [[ -n "$main_pid" ]]; then
+            if command -v ps >/dev/null 2>&1; then
+                memory_usage=$(ps -o rss= -p "$main_pid" 2>/dev/null | awk '{print int($1/1024)"MB"}')
+                cpu_usage=$(ps -o %cpu= -p "$main_pid" 2>/dev/null | awk '{print $1"%"}')
+            fi
+        fi
+        
         echo -e "${GREEN}✓${NC} $service_name - ${GREEN}Active${NC} (Since: $uptime)"
+        if [[ -n "$memory_usage" ]]; then
+            echo -e "  ${BLUE}Memory:${NC} $memory_usage  ${BLUE}CPU:${NC} $cpu_usage"
+        fi
         if [[ -n "$ports" ]]; then
             echo -e "  ${BLUE}Ports:${NC} $ports"
+            
+            # بررسی وضعیت هر پورت
+            for port in $ports; do
+                if [[ -n "$port" ]]; then
+                    if check_port "$port"; then
+                        echo -e "    ${GREEN}✓${NC} Port $port: ${GREEN}Listening${NC}"
+                    else
+                        echo -e "    ${RED}✗${NC} Port $port: ${RED}Not accessible${NC}"
+                    fi
+                fi
+            done
         fi
     else
-        echo -e "${RED}✗${NC} $service_name - ${RED}$status${NC}"
+        echo -e "${RED}✗${NC} $service_name - ${RED}$status${NC} (Enabled: $enabled)"
+        
+        # نمایش آخرین خطاها
+        if command -v journalctl >/dev/null 2>&1; then
+            local last_error=$(journalctl -u "$service_name" --since "10 minutes ago" -p err --no-pager -q | tail -1)
+            if [[ -n "$last_error" ]]; then
+                echo -e "  ${RED}Last Error:${NC} $(echo "$last_error" | cut -c1-80)..."
+            fi
+        fi
     fi
+    
+    echo ""
 }
 
 # Main monitoring function
@@ -1437,6 +1612,128 @@ show_help() {
     echo "  Smart error detection: $ENABLE_SMART_ERROR_DETECTION"
     echo "  Config directory: $RATHOLE_CONFIG_DIR"
     echo "  Service prefix: $RATHOLE_SERVICE_PREFIX"
+}
+
+extract_service_info() {
+    local service_name="$1"
+    local service_base=$(echo "$service_name" | sed 's/\.service$//')
+    
+    local service_type=""
+    local service_port=""
+    local service_location=""
+    
+    # الگوهای مختلف نام‌گذاری
+    if [[ "$service_base" =~ ^rathole-(kharej|iran)\(([0-9]+)\)$ ]]; then
+        service_type="${BASH_REMATCH[1]}"
+        service_port="${BASH_REMATCH[2]}"
+    elif [[ "$service_base" =~ ^rathole-(kharej|iran)([0-9]+)$ ]]; then
+        service_type="${BASH_REMATCH[1]}"
+        service_port="${BASH_REMATCH[2]}"
+    elif [[ "$service_base" =~ ^rathole-(kharej|iran)-([0-9]+)$ ]]; then
+        service_type="${BASH_REMATCH[1]}"
+        service_port="${BASH_REMATCH[2]}"
+    elif [[ "$service_base" =~ ^rathole-([0-9]+)$ ]]; then
+        service_port="${BASH_REMATCH[1]}"
+        service_type="unknown"
+    fi
+    
+    # تعیین موقعیت بر اساس نوع
+    case "$service_type" in
+        "kharej")
+            service_location="خارج"
+            ;;
+        "iran")
+            service_location="ایران"
+            ;;
+        *)
+            service_location="نامشخص"
+            ;;
+    esac
+    
+    # بازگرداندن اطلاعات به صورت متغیرهای جداگانه
+    echo "SERVICE_TYPE='$service_type'"
+    echo "SERVICE_PORT='$service_port'"  
+    echo "SERVICE_LOCATION='$service_location'"
+}
+
+show_summary_status() {
+    echo -e "${BLUE}=== خلاصه وضعیت تانل‌های Rathole ===${NC}"
+    echo ""
+    
+    local services=$(get_rathole_services)
+    local total_services=0
+    local active_services=0
+    local kharej_services=0
+    local iran_services=0
+    local kharej_active=0
+    local iran_active=0
+    
+    if [[ -z "$services" ]]; then
+        echo -e "${YELLOW}هیچ سرویس rathole یافت نشد${NC}"
+        return 1
+    fi
+    
+    # شمارش سرویس‌ها
+    while IFS= read -r service; do
+        if [[ -n "$service" ]]; then
+            total_services=$((total_services + 1))
+            
+            # بررسی وضعیت سرویس
+            if check_service_status "$service"; then
+                active_services=$((active_services + 1))
+            fi
+            
+            # تشخیص نوع سرویس
+            eval "$(extract_service_info "$service")"
+            case "$SERVICE_TYPE" in
+                "kharej")
+                    kharej_services=$((kharej_services + 1))
+                    if check_service_status "$service"; then
+                        kharej_active=$((kharej_active + 1))
+                    fi
+                    ;;
+                "iran")
+                    iran_services=$((iran_services + 1))
+                    if check_service_status "$service"; then
+                        iran_active=$((iran_active + 1))
+                    fi
+                    ;;
+            esac
+        fi
+    done <<< "$services"
+    
+    # نمایش آمار
+    echo -e "${BLUE}آمار کلی:${NC}"
+    echo -e "  کل سرویس‌ها: $total_services"
+    echo -e "  سرویس‌های فعال: ${GREEN}$active_services${NC}"
+    echo -e "  سرویس‌های غیرفعال: ${RED}$((total_services - active_services))${NC}"
+    echo ""
+    
+    if [[ $kharej_services -gt 0 ]] || [[ $iran_services -gt 0 ]]; then
+        echo -e "${BLUE}تفکیک بر اساس مکان:${NC}"
+        if [[ $kharej_services -gt 0 ]]; then
+            echo -e "  سرورهای خارج: $kharej_services (فعال: ${GREEN}$kharej_active${NC})"
+        fi
+        if [[ $iran_services -gt 0 ]]; then
+            echo -e "  سرورهای ایران: $iran_services (فعال: ${GREEN}$iran_active${NC})"
+        fi
+        echo ""
+    fi
+    
+    # وضعیت کلی سیستم
+    local system_health="سالم"
+    local health_color="$GREEN"
+    
+    if [[ $active_services -eq 0 ]]; then
+        system_health="خراب"
+        health_color="$RED"
+    elif [[ $active_services -lt $total_services ]]; then
+        system_health="نیمه فعال"
+        health_color="$YELLOW"
+    fi
+    
+    echo -e "${BLUE}وضعیت کلی سیستم: ${health_color}$system_health${NC}"
+    echo ""
 }
 
 # Create log directory if it doesn't exist
