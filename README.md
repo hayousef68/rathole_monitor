@@ -10,7 +10,7 @@
 دستور یک خطی برای نصب:
 
 
- " curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash  "
+  curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash 
 
 
 
