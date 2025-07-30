@@ -42,7 +42,7 @@ install_dependencies() {
     log "Installing required dependencies..."
     if command -v apt-get &> /dev/null; then
         apt-get update
-        apt-get install -y python3 python3-pip git curl wget
+        apt-get install -y python3 python3-pip git curl wget python3-venv
     elif command -v yum &> /dev/null; then
         yum install -y epel-release || true
         yum install -y python3 python3-pip git curl wget
@@ -92,13 +92,20 @@ setup_project() {
     fi
     
     # Install Python dependencies
+    log "Creating virtual environment..."
+    python3 -m venv venv || {
+        error "Failed to create virtual environment. Make sure python3-venv is installed."
+        exit 1
+    }
+    
+    log "Installing Python dependencies in virtual environment..."
+    source venv/bin/activate
     if [ -f "requirements.txt" ]; then
-        log "Installing Python dependencies..."
-        python3 -m pip install -r requirements.txt
+        pip install -r requirements.txt --quiet
     else
-        log "Installing basic Python dependencies..."
-        python3 -m pip install flask requests psutil --quiet
+        pip install flask requests psutil --quiet
     fi
+    deactivate
 }
 
 create_service() {
@@ -117,7 +124,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=$PROJECT_DIR
-ExecStart=/usr/bin/python3 app.py
+ExecStart=$PROJECT_DIR/venv/bin/python app.py
 Restart=always
 RestartSec=10
 Environment=PORT=$DEFAULT_PORT
@@ -142,8 +149,8 @@ start_app() {
         exit 1
     fi
     
-    # Start in background
-    nohup python3 app.py > "$LOG_FILE" 2>&1 &
+    # Start in background using virtual environment
+    nohup $PROJECT_DIR/venv/bin/python app.py > "$LOG_FILE" 2>&1 &
     APP_PID=$!
     
     # Wait a moment and check if process is running
@@ -153,6 +160,8 @@ start_app() {
         log "📋 Process ID: $APP_PID"
         log "🌐 Port: $DEFAULT_PORT"
         log "📝 Log file: $LOG_FILE"
+        log "🔍 Check status: ps aux | grep app.py"
+        log "📊 View logs: tail -f $LOG_FILE"
     else
         error "Failed to start application"
         exit 1
