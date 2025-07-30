@@ -44,152 +44,23 @@
 
 ### 1️⃣ نصب سریع (یک دستوری)
 
-```bash
+
+curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash
+### 2️⃣ نصب دستی
+
+
 # نصب پایه
 curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash
 
-# نصب با پورت سفارشی
+# نصب روی پورت خاص
 curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash -s -- -p 8080
 
-# نصب چندین نمونه همزمان
+# نصب چندین instance همزمان
 curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash -s -- -m 3
-```
 
-### 2️⃣ نصب دستی
+# حذف کامل
+curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash -s -- -u
 
-```bash
-# کلون کردن مخزن
-git clone https://github.com/hayousef68/rathole_monitor.git
-cd rathole_monitor
-
-# نصب وابستگی‌های سیستم
-sudo apt update
-sudo apt install -y python3 python3-pip python3-venv git
-
-# نصب پکیج‌های Python
-sudo apt install -y python3-flask python3-psutil python3-requests
-
-# اجرای برنامه
-python3 app.py
-```
-
-## 🎮 دستورات کاربردی
-
-### اسکریپت run.sh
-
-| گزینه | توضیح | مثال |
-|--------|--------|--------|
-| `-p, --port` | تنظیم شماره پورت | `./run.sh -p 8080` |
-| `-m, --multiple` | اجرای چندین نمونه | `./run.sh -m 3` |
-| `-s, --service` | ایجاد سرویس systemd | `./run.sh -s` |
-| `-k, --kill` | متوقف کردن پروسس‌ها | `./run.sh -k` |
-| `-h, --help` | نمایش راهنما | `./run.sh -h` |
-
-### اسکریپت rathole_monitor.sh
-
-```bash
-# مانیتورینگ یکباره
-./rathole_monitor.sh monitor
-
-# اجرای مداوم (daemon)
-./rathole_monitor.sh daemon
-
-# نمایش وضعیت سرویس‌ها
-./rathole_monitor.sh status
-
-# نصب به عنوان سرویس systemd
-sudo ./rathole_monitor.sh install
-
-# حذف سرویس
-sudo ./rathole_monitor.sh uninstall
-```
-
-## 📊 داشبورد وب
-
-### دسترسی
-پس از راه‌اندازی، داشبورد در آدرس زیر قابل دسترسی است:
-```
-http://YOUR_SERVER_IP:3000
-```
-
-### بخش‌های داشبورد
-1. **وضعیت تونل**: نمایش وضعیت آنلاین/آفلاین، uptime، پورت‌ها
-2. **منابع سیستم**: CPU, Memory, Disk usage با نمودارهای تعاملی
-3. **اطلاعات شبکه**: IP سرور، پورت‌های فعال، پروتکل
-4. **لاگ‌های سیستم**: نمایش real-time لاگ‌ها با فیلتر سطح
-
-### API Endpoints
-- `GET /` - صفحه اصلی داشبورد
-- `GET /api/stats` - آمار سیستم (JSON)
-- `GET /api/logs` - لاگ‌های اخیر (JSON)
-- `GET /api/health` - وضعیت سلامت سرویس
-
-## 🔧 پیکربندی پیشرفته
-
-### متغیرهای محیطی
-
-#### داشبورد وب
-```bash
-export PORT=8080          # پورت وب سرور
-export DEBUG=true         # حالت دیباگ
-```
-
-#### اسکریپت مانیتورینگ
-```bash
-export LOG_FILE="/custom/path/rathole_monitor.log"
-export CHECK_INTERVAL=600                           # فاصله بررسی (ثانیه)
-export MAX_RETRIES=3                               # حداکثر تلاش مجدد
-export ENABLE_SMART_ERROR_DETECTION=true          # تشخیص هوشمند خطا
-```
-
-### پیکربندی rathole_monitor.sh
-
-| تنظیم | مقدار پیش‌فرض | توضیح |
-|-------|---------|-------|
-| `CHECK_INTERVAL` | 300 | فاصله بررسی (ثانیه) |
-| `MAX_RETRIES` | 3 | حداکثر تلاش برای راه‌اندازی |
-| `RETRY_DELAY` | 10 | تاخیر بین تلاش‌ها (ثانیه) |
-| `MIN_CRITICAL_ERRORS` | 1 | حداقل خطای بحرانی برای restart |
-| `RATHOLE_CONFIG_DIR` | /etc/rathole | مسیر فایل‌های تنظیم |
-
-## 🛡️ تشخیص خطاهای هوشمند
-
-### خطاهای نادیده گرفته شده
-- مشکلات اتصال موقت (Connection refused, timeout)
-- خطاهای شبکه عادی (Network unreachable)
-- قطع اتصالات طبیعی (Connection closed by peer)
-
-### خطاهای بحرانی
-- خطاهای سیستمی (panic, fatal, segmentation fault)
-- مشکلات پیکربندی (config error, bind failed)
-- خطاهای منابع (out of memory, permission denied)
-- خرابی فرآیند (process exited, service failed)
-
-## 📈 مانیتورینگ و لاگ‌ها
-
-### مسیرهای مهم
-| مسیر | توضیح |
-|------|--------|
-| `/var/log/rathole_monitor.log` | لاگ اصلی |
-| `/tmp/rathole_monitor/` | پوشه پروژه |
-| `/etc/systemd/system/rathole-monitor.service` | فایل سرویس |
-| `/etc/rathole/` | پیکربندی rathole |
-
-### دستورات مفید
-```bash
-# مشاهده لاگ‌ها
-tail -f /var/log/rathole_monitor.log
-
-# بررسی وضعیت سرویس
-systemctl status rathole-monitor
-
-# مشاهده لاگ‌های systemd
-journalctl -u rathole-monitor -f
-
-# بررسی پروسس‌های فعال
-ps aux | grep python3
-ps aux | grep rathole
-```
 
 ## 🔄 مدیریت سرویس systemd
 
