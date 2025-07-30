@@ -3,7 +3,6 @@
 Rathole Monitor - Web Dashboard for Rathole Tunnel Status
 Enhanced version with better integration with rathole_monitor.sh
 """
-
 import os
 import sys
 import time
@@ -15,15 +14,12 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template_string, jsonify, request
 import psutil
 import socket
-
 # Configuration
 PORT = int(os.getenv('PORT', 3000))
 DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
 RATHOLE_MONITOR_SCRIPT = os.getenv('RATHOLE_MONITOR_SCRIPT', '/root/rathole_monitor/rathole_monitor.sh')
 LOG_FILE = "/var/log/rathole_monitor.log"
-
 app = Flask(__name__)
-
 # Global variables for monitoring
 tunnel_status = {}
 system_stats = {}
@@ -258,9 +254,7 @@ HTML_TEMPLATE = '''
             <h1>🚇 Rathole Monitor Dashboard</h1>
             <p>Real-time tunnel status and system monitoring</p>
         </div>
-        
         <div id="alerts-container"></div>
-        
         <div class="stats-grid">
             <div class="card">
                 <h3>🔌 System Status</h3>
@@ -287,7 +281,6 @@ HTML_TEMPLATE = '''
                     <button class="btn btn-warning" onclick="restartAllServices()">🔄 Restart All</button>
                 </div>
             </div>
-            
             <div class="card">
                 <h3>💾 System Resources</h3>
                 <div id="system-stats">
@@ -298,7 +291,6 @@ HTML_TEMPLATE = '''
                     <div class="metric-bar">
                         <div class="metric-fill" id="cpu-bar"></div>
                     </div>
-                    
                     <div class="status-item">
                         <span class="status-label">Memory Usage:</span>
                         <span class="status-value" id="memory-usage">--</span>
@@ -306,7 +298,6 @@ HTML_TEMPLATE = '''
                     <div class="metric-bar">
                         <div class="metric-fill" id="memory-bar"></div>
                     </div>
-                    
                     <div class="status-item">
                         <span class="status-label">Disk Usage:</span>
                         <span class="status-value" id="disk-usage">--</span>
@@ -316,7 +307,6 @@ HTML_TEMPLATE = '''
                     </div>
                 </div>
             </div>
-            
             <div class="card">
                 <h3>🌐 Network Info</h3>
                 <div id="network-info">
@@ -339,7 +329,6 @@ HTML_TEMPLATE = '''
                 </div>
             </div>
         </div>
-        
         <div class="card">
             <h3>🚇 Rathole Services</h3>
             <div id="services-container" class="services-grid">
@@ -350,7 +339,6 @@ HTML_TEMPLATE = '''
                 <button class="btn btn-warning" onclick="showServiceStatus()">📊 Show Status</button>
             </div>
         </div>
-        
         <div class="card">
             <h3>📋 System Logs</h3>
             <div class="log-container" id="log-container">
@@ -363,18 +351,15 @@ HTML_TEMPLATE = '''
             </div>
         </div>
     </div>
-
     <script>
         let startTime = Date.now();
         let isLoading = false;
-        
         function showAlert(message, type = 'info') {
             const alertsContainer = document.getElementById('alerts-container');
             const alert = document.createElement('div');
             alert.className = `alert alert-${type}`;
             alert.innerHTML = `${message} <button onclick="this.parentElement.remove()" style="float: right; background: none; border: none; color: white; cursor: pointer;">×</button>`;
             alertsContainer.appendChild(alert);
-            
             // Auto remove after 5 seconds
             setTimeout(() => {
                 if (alert.parentElement) {
@@ -382,7 +367,6 @@ HTML_TEMPLATE = '''
                 }
             }, 5000);
         }
-        
         function updateUptime() {
             const now = Date.now();
             const uptime = Math.floor((now - startTime) / 1000);
@@ -390,17 +374,13 @@ HTML_TEMPLATE = '''
             const hours = Math.floor((uptime % 86400) / 3600);
             const minutes = Math.floor((uptime % 3600) / 60);
             const seconds = uptime % 60;
-            
             let uptimeStr = '';
             if (days > 0) uptimeStr += `${days}d `;
             uptimeStr += `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-            
             document.getElementById('uptime').textContent = uptimeStr;
         }
-        
         function updateSystemStats() {
             if (isLoading) return;
-            
             fetch('/api/stats')
                 .then(response => response.json())
                 .then(data => {
@@ -410,21 +390,18 @@ HTML_TEMPLATE = '''
                     const cpuBar = document.getElementById('cpu-bar');
                     cpuBar.style.width = `${cpuUsage}%`;
                     cpuBar.className = `metric-fill ${cpuUsage > 80 ? 'danger' : cpuUsage > 60 ? 'warning' : ''}`;
-                    
                     // Update Memory
                     const memoryUsage = data.memory_percent;
                     document.getElementById('memory-usage').textContent = `${memoryUsage}%`;
                     const memoryBar = document.getElementById('memory-bar');
                     memoryBar.style.width = `${memoryUsage}%`;
                     memoryBar.className = `metric-fill ${memoryUsage > 80 ? 'danger' : memoryUsage > 60 ? 'warning' : ''}`;
-                    
                     // Update Disk
                     const diskUsage = data.disk_percent;
                     document.getElementById('disk-usage').textContent = `${diskUsage}%`;
                     const diskBar = document.getElementById('disk-bar');
                     diskBar.style.width = `${diskUsage}%`;
                     diskBar.className = `metric-fill ${diskUsage > 80 ? 'danger' : diskUsage > 60 ? 'warning' : ''}`;
-                    
                     // Update other info
                     document.getElementById('active-connections').textContent = data.connections;
                     document.getElementById('server-ip').textContent = data.server_ip;
@@ -435,26 +412,20 @@ HTML_TEMPLATE = '''
                     showAlert('Failed to fetch system stats', 'warning');
                 });
         }
-        
         function refreshServices() {
             if (isLoading) return;
             isLoading = true;
-            
             fetch('/api/services')
                 .then(response => response.json())
                 .then(data => {
                     const container = document.getElementById('services-container');
                     container.innerHTML = '';
-                    
                     document.getElementById('total-services').textContent = data.services.length;
-                    
                     data.services.forEach(service => {
                         const serviceCard = document.createElement('div');
                         serviceCard.className = 'service-card';
-                        
                         const statusClass = service.status === 'active' ? 'status-online' : 'status-offline';
                         const statusIcon = service.status === 'active' ? '●' : '●';
-                        
                         serviceCard.innerHTML = `
                             <div class="service-name">${service.name}</div>
                             <div class="service-status">
@@ -474,10 +445,8 @@ HTML_TEMPLATE = '''
                                 <button class="btn btn-warning" onclick="checkService('${service.name}')">🔍</button>
                             </div>
                         `;
-                        
                         container.appendChild(serviceCard);
                     });
-                    
                     isLoading = false;
                 })
                 .catch(error => {
@@ -486,14 +455,12 @@ HTML_TEMPLATE = '''
                     isLoading = false;
                 });
         }
-        
         function refreshLogs() {
             fetch('/api/logs')
                 .then(response => response.json())
                 .then(data => {
                     const logContainer = document.getElementById('log-container');
                     logContainer.innerHTML = '';
-                    
                     data.logs.forEach(log => {
                         const logEntry = document.createElement('div');
                         logEntry.className = 'log-entry';
@@ -504,7 +471,6 @@ HTML_TEMPLATE = '''
                         `;
                         logContainer.appendChild(logEntry);
                     });
-                    
                     // Auto-scroll to bottom
                     logContainer.scrollTop = logContainer.scrollHeight;
                 })
@@ -513,12 +479,10 @@ HTML_TEMPLATE = '''
                     showAlert('Failed to fetch logs', 'warning');
                 });
         }
-        
         function runMonitorCheck() {
             if (isLoading) return;
             isLoading = true;
             showAlert('Running monitor check...', 'info');
-            
             fetch('/api/monitor/check', { method: 'POST' })
                 .then(response => response.json())
                 .then(data => {
@@ -533,11 +497,9 @@ HTML_TEMPLATE = '''
                     isLoading = false;
                 });
         }
-        
         function restartService(serviceName) {
             if (isLoading) return;
             showAlert(`Restarting ${serviceName}...`, 'info');
-            
             fetch('/api/service/restart', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -554,14 +516,11 @@ HTML_TEMPLATE = '''
                     showAlert('Failed to restart service', 'warning');
                 });
         }
-        
         function restartAllServices() {
             if (isLoading) return;
             if (!confirm('Are you sure you want to restart all services?')) return;
-            
             isLoading = true;
             showAlert('Restarting all services...', 'info');
-            
             fetch('/api/services/restart-all', { method: 'POST' })
                 .then(response => response.json())
                 .then(data => {
@@ -576,10 +535,8 @@ HTML_TEMPLATE = '''
                     isLoading = false;
                 });
         }
-        
         function checkService(serviceName) {
             showAlert(`Checking ${serviceName}...`, 'info');
-            
             fetch('/api/service/check', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -595,12 +552,12 @@ HTML_TEMPLATE = '''
                     showAlert('Failed to check service', 'warning');
                 });
         }
-        
         function showServiceStatus() {
             fetch('/api/services/status')
                 .then(response => response.json())
                 .then(data => {
-                    const message = `Services Status:\n${data.services.map(s => `${s.name}: ${s.status}`).join('\n')}`;
+                    const message = `Services Status:
+${data.services.map(s => `${s.name}: ${s.status}`).join('\n')}`;
                     alert(message);
                 })
                 .catch(error => {
@@ -608,10 +565,8 @@ HTML_TEMPLATE = '''
                     showAlert('Failed to fetch service status', 'warning');
                 });
         }
-        
         function clearLogs() {
             if (!confirm('Are you sure you want to clear all logs?')) return;
-            
             fetch('/api/logs/clear', { method: 'POST' })
                 .then(response => response.json())
                 .then(data => {
@@ -623,23 +578,19 @@ HTML_TEMPLATE = '''
                     showAlert('Failed to clear logs', 'warning');
                 });
         }
-        
         function downloadLogs() {
             window.open('/api/logs/download', '_blank');
         }
-        
         // Initialize and set intervals
         setInterval(updateUptime, 1000);
         setInterval(updateSystemStats, 5000);
         setInterval(refreshServices, 30000);
         setInterval(refreshLogs, 15000);
-        
         // Initial load
         updateUptime();
         updateSystemStats();
         refreshServices();
         refreshLogs();
-        
         // Check for monitor script availability
         fetch('/api/monitor/status')
             .then(response => response.json())
@@ -671,10 +622,8 @@ def get_system_stats():
         cpu_percent = psutil.cpu_percent(interval=1)
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
-        
         # Count network connections
         connections = len([conn for conn in psutil.net_connections(kind='tcp') if conn.status == 'ESTABLISHED'])
-        
         return {
             'cpu_percent': round(cpu_percent, 1),
             'memory_percent': round(memory.percent, 1),
@@ -704,11 +653,9 @@ def add_log(level, message):
         'message': message
     }
     logs.append(log_entry)
-    
     # Keep only last 500 logs
     if len(logs) > 500:
         logs = logs[-500:]
-    
     print(f"[{log_entry['timestamp']}] {level.upper()}: {message}")
 
 def run_monitor_script(action, service=None):
@@ -717,21 +664,21 @@ def run_monitor_script(action, service=None):
         if not os.path.exists(RATHOLE_MONITOR_SCRIPT):
             return False, "Monitor script not found"
         
-        cmd = [RATHOLE_MONITOR_SCRIPT, action]
+        # Always run the script with sudo to ensure proper permissions
+        cmd = ['sudo', RATHOLE_MONITOR_SCRIPT, action]
         if service:
-            # For individual service operations, we might need to modify the script
-            # For now, we'll run the general action
-            pass
-        
+            cmd.append(service)  # اضافه کردن نام سرویس به دستور
+            
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        
         if result.returncode == 0:
             add_log('info', f'Monitor script {action} completed successfully')
             return True, result.stdout
         else:
-            add_log('error', f'Monitor script {action} failed: {result.stderr}')
-            return False, result.stderr
-            
+            error_msg = result.stderr.strip()
+            if not error_msg:
+                error_msg = result.stdout.strip()
+            add_log('error', f'Monitor script {action} failed: {error_msg}')
+            return False, error_msg
     except subprocess.TimeoutExpired:
         add_log('error', f'Monitor script {action} timed out')
         return False, "Operation timed out"
@@ -740,76 +687,113 @@ def run_monitor_script(action, service=None):
         return False, str(e)
 
 def get_rathole_services():
-    """Get list of rathole services using systemctl"""
+    """Get list of rathole services using the monitor script"""
     try:
-        result = subprocess.run(
-            ['systemctl', 'list-units', '--type=service', '--all', '--no-legend'],
-            capture_output=True, text=True, timeout=30
-        )
+        success, output = run_monitor_script('status')
+        if not success:
+            add_log('error', f'Failed to get services from monitor script: {output}')
+            # Fallback to systemctl
+            result = subprocess.run(
+                ['systemctl', 'list-units', '--type=service', '--all', '--no-legend'],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                return []
+            services = []
+            for line in result.stdout.split('\n'):
+                if line.strip():
+                    parts = line.split()
+                    if len(parts) > 0:
+                        service_name = parts[0]
+                        # Match rathole-iran*.service or rathole-kharej*.service pattern
+                        if re.match(r'^rathole-(iran|kharej)\d+\.service$', service_name):
+                            services.append(service_name)
+            return sorted(services)
         
-        if result.returncode != 0:
-            return []
-        
+        # Parse the output to extract service names
         services = []
-        for line in result.stdout.split('\n'):
-            if line.strip():
-                parts = line.split()
-                if len(parts) > 0:
-                    service_name = parts[0]
-                    # Match rathole-iran*.service or rathole-kharej*.service pattern
-                    if re.match(r'^rathole-(iran|kharej)\d+\.service$', service_name):
-                        services.append(service_name)
-        
+        in_service_list = False
+        for line in output.split('\n'):
+            if '=== Rathole Tunnel Status ===' in line:
+                in_service_list = True
+                continue
+            if in_service_list and line.strip():
+                # Look for service lines that start with ✓ or ✗
+                if line.startswith('✓') or line.startswith('✗'):
+                    # Extract service name (format: "✓ rathole-iran1234.service - Active")
+                    service_name = line.split('-')[0].strip('✓✗ ')
+                    services.append(service_name)
         return sorted(services)
-        
     except Exception as e:
         add_log('error', f'Error getting rathole services: {str(e)}')
         return []
 
 def get_service_info(service_name):
-    """Get detailed information about a service"""
+    """Get detailed information about a service using the monitor script"""
     try:
-        # Get service status
-        status_result = subprocess.run(
-            ['systemctl', 'is-active', service_name],
-            capture_output=True, text=True
-        )
-        status = status_result.stdout.strip()
+        # Use the monitor script to get service info
+        success, output = run_monitor_script('status', service_name)
         
-        # Get service uptime
-        uptime_result = subprocess.run(
-            ['systemctl', 'show', service_name, '--property=ActiveEnterTimestamp', '--value'],
-            capture_output=True, text=True
-        )
-        uptime_str = uptime_result.stdout.strip()
+        status = "inactive"
+        ports = "N/A"
+        uptime = "N/A"
         
-        # Extract ports from service name (rathole-iran1234 -> 1234)
-        port_match = re.search(r'rathole-(iran|kharej)(\d+)', service_name)
-        ports = port_match.group(2) if port_match else 'N/A'
+        # Parse the output to extract information
+        for line in output.split('\n'):
+            if line.strip():
+                if line.startswith('✓') or line.startswith('✗'):
+                    # Extract status
+                    status = "active" if line.startswith('✓') else "inactive"
+                    # Extract ports if available
+                    if "Ports:" in line:
+                        ports_line = line.split("Ports:")[1].strip()
+                        ports = ports_line.split()[0]  # Get first port or list
+                elif "Since:" in line and status == "active":
+                    # Extract uptime
+                    uptime_str = line.split("Since:")[1].strip()
+                    uptime = parse_uptime(uptime_str)
         
-        # Calculate uptime
-        uptime = 'N/A'
-        if uptime_str and status == 'active':
+        # If we couldn't get info from the script, fallback to direct systemctl
+        if status == "inactive":
             try:
-                # Parse the timestamp and calculate uptime
-                from datetime import datetime
-                if 'ago' not in uptime_str and uptime_str != 'n/a':
-                    # Try to parse the timestamp
-                    start_time = datetime.strptime(uptime_str[:19], '%Y-%m-%d %H:%M:%S')
-                    uptime_seconds = (datetime.now() - start_time).total_seconds()
-                    
-                    days = int(uptime_seconds // 86400)
-                    hours = int((uptime_seconds % 86400) // 3600)
-                    minutes = int((uptime_seconds % 3600) // 60)
-                    
-                    if days > 0:
-                        uptime = f"{days}d {hours}h {minutes}m"
-                    elif hours > 0:
-                        uptime = f"{hours}h {minutes}m"
-                    else:
-                        uptime = f"{minutes}m"
-            except:
-                pass
+                status_result = subprocess.run(
+                    ['systemctl', 'is-active', service_name],
+                    capture_output=True, text=True
+                )
+                status = status_result.stdout.strip()
+                
+                # Get service uptime
+                uptime_result = subprocess.run(
+                    ['systemctl', 'show', service_name, '--property=ActiveEnterTimestamp', '--value'],
+                    capture_output=True, text=True
+                )
+                uptime_str = uptime_result.stdout.strip()
+                
+                # Extract ports from service name (rathole-iran1234 -> 1234)
+                port_match = re.search(r'rathole-(iran|kharej)(\d+)', service_name)
+                ports = port_match.group(2) if port_match else 'N/A'
+                
+                # Calculate uptime
+                if uptime_str and status == 'active':
+                    try:
+                        # Parse the timestamp and calculate uptime
+                        if 'ago' not in uptime_str and uptime_str != 'n/a':
+                            # Try to parse the timestamp
+                            start_time = datetime.strptime(uptime_str[:19], '%Y-%m-%d %H:%M:%S')
+                            uptime_seconds = (datetime.now() - start_time).total_seconds()
+                            days = int(uptime_seconds // 86400)
+                            hours = int((uptime_seconds % 86400) // 3600)
+                            minutes = int((uptime_seconds % 3600) // 60)
+                            if days > 0:
+                                uptime = f"{days}d {hours}h {minutes}m"
+                            elif hours > 0:
+                                uptime = f"{hours}h {minutes}m"
+                            else:
+                                uptime = f"{minutes}m"
+                    except Exception as e:
+                        add_log('debug', f'Error parsing uptime for {service_name}: {str(e)}')
+            except Exception as e:
+                add_log('error', f'Error getting service info fallback for {service_name}: {str(e)}')
         
         return {
             'name': service_name,
@@ -817,7 +801,6 @@ def get_service_info(service_name):
             'ports': ports,
             'uptime': uptime
         }
-        
     except Exception as e:
         add_log('error', f'Error getting service info for {service_name}: {str(e)}')
         return {
@@ -827,37 +810,45 @@ def get_service_info(service_name):
             'uptime': 'N/A'
         }
 
-def restart_systemd_service(service_name):
-    """Restart a systemd service"""
+def parse_uptime(uptime_str):
+    """Parse uptime string from systemctl output"""
     try:
-        result = subprocess.run(
-            ['systemctl', 'restart', service_name],
-            capture_output=True, text=True, timeout=30
-        )
-        
-        if result.returncode == 0:
-            add_log('info', f'Successfully restarted service: {service_name}')
-            return True, f'Service {service_name} restarted successfully'
-        else:
-            add_log('error', f'Failed to restart service {service_name}: {result.stderr}')
-            return False, f'Failed to restart {service_name}: {result.stderr}'
+        # Example format: "2023-05-15 14:30:22 +0330"
+        # We just want to calculate how long it's been running
+        if not uptime_str or uptime_str == 'n/a':
+            return 'N/A'
             
+        # Extract date and time part
+        time_part = uptime_str.split('+')[0].strip()
+        
+        # Parse the timestamp
+        start_time = datetime.strptime(time_part, '%Y-%m-%d %H:%M:%S')
+        uptime_seconds = (datetime.now() - start_time).total_seconds()
+        
+        # Format the uptime
+        days = int(uptime_seconds // 86400)
+        hours = int((uptime_seconds % 86400) // 3600)
+        minutes = int((uptime_seconds % 3600) // 60)
+        
+        if days > 0:
+            return f"{days}d {hours}h {minutes}m"
+        elif hours > 0:
+            return f"{hours}h {minutes}m"
+        else:
+            return f"{minutes}m"
     except Exception as e:
-        add_log('error', f'Error restarting service {service_name}: {str(e)}')
-        return False, str(e)
+        add_log('debug', f'Error parsing uptime: {str(e)}')
+        return uptime_str  # Return original string if parsing fails
 
 def monitor_rathole_processes():
     """Monitor rathole processes in background"""
     add_log('info', 'Starting rathole process monitor thread')
-    
     while True:
         try:
             # Get rathole services
             services = get_rathole_services()
-            
             if services:
                 add_log('info', f'Monitoring {len(services)} rathole services')
-                
                 # Check each service
                 for service in services:
                     info = get_service_info(service)
@@ -865,9 +856,7 @@ def monitor_rathole_processes():
                         add_log('warning', f'Service {service} is {info["status"]}')
             else:
                 add_log('warning', 'No rathole services found')
-            
             time.sleep(60)  # Check every minute
-            
         except Exception as e:
             add_log('error', f'Monitor thread error: {str(e)}')
             time.sleep(30)
@@ -890,11 +879,9 @@ def api_services():
     try:
         services = get_rathole_services()
         service_info = []
-        
         for service in services:
             info = get_service_info(service)
             service_info.append(info)
-        
         return jsonify({
             'success': True,
             'services': service_info,
@@ -914,14 +901,12 @@ def api_services_status():
     try:
         services = get_rathole_services()
         service_status = []
-        
         for service in services:
             info = get_service_info(service)
             service_status.append({
                 'name': info['name'],
                 'status': info['status']
             })
-        
         return jsonify({
             'success': True,
             'services': service_status
@@ -938,19 +923,16 @@ def api_service_restart():
     try:
         data = request.get_json()
         service_name = data.get('service')
-        
         if not service_name:
             return jsonify({
                 'success': False,
                 'message': 'Service name not provided'
             })
-        
-        success, message = restart_systemd_service(service_name)
+        success, message = run_monitor_script('restart', service_name)
         return jsonify({
             'success': success,
-            'message': message
+            'message': message if success else f'Failed to restart: {message}'
         })
-        
     except Exception as e:
         add_log('error', f'Error in api_service_restart: {str(e)}')
         return jsonify({
@@ -964,25 +946,21 @@ def api_services_restart_all():
     try:
         services = get_rathole_services()
         results = []
-        
         for service in services:
-            success, message = restart_systemd_service(service)
+            success, message = run_monitor_script('restart', service)
             results.append({
                 'service': service,
                 'success': success,
                 'message': message
             })
             time.sleep(2)  # Wait between restarts
-        
         successful = sum(1 for r in results if r['success'])
         total = len(results)
-        
         return jsonify({
             'success': successful == total,
             'message': f'Restarted {successful}/{total} services successfully',
             'results': results
         })
-        
     except Exception as e:
         add_log('error', f'Error in api_services_restart_all: {str(e)}')
         return jsonify({
@@ -996,20 +974,17 @@ def api_service_check():
     try:
         data = request.get_json()
         service_name = data.get('service')
-        
         if not service_name:
             return jsonify({
                 'success': False,
                 'message': 'Service name not provided'
             })
-        
         info = get_service_info(service_name)
         return jsonify({
             'success': info['status'] == 'active',
             'message': f'Service {service_name} is {info["status"]}',
             'info': info
         })
-        
     except Exception as e:
         return jsonify({
             'success': False,
@@ -1063,17 +1038,14 @@ def api_logs_download():
     """API endpoint to download logs"""
     try:
         from flask import make_response
-        
         log_content = '\n'.join([
             f"[{log['timestamp']}] {log['level'].upper()}: {log['message']}"
             for log in logs
         ])
-        
         response = make_response(log_content)
         response.headers['Content-Disposition'] = f'attachment; filename=rathole_monitor_logs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt'
         response.headers['Content-Type'] = 'text/plain'
         return response
-        
     except Exception as e:
         return jsonify({
             'success': False,
