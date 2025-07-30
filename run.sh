@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Rathole Monitor - Auto Installation & Setup Script
+# Rathole Monitor - Auto Installation & Setup Script (Fixed Version)
 # Usage: curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash
 
 set -e
@@ -104,6 +104,13 @@ install_dependencies() {
             nano \
             unzip \
             build-essential \
+            procps \
+            util-linux \
+            coreutils \
+            bash \
+            grep \
+            sed \
+            awk \
             2>/dev/null || true
             
         # Try to install Python packages from system repos
@@ -130,6 +137,13 @@ install_dependencies() {
             nano \
             unzip \
             gcc \
+            procps-ng \
+            util-linux \
+            coreutils \
+            bash \
+            grep \
+            sed \
+            gawk \
             2>/dev/null || true
             
     elif command -v dnf &> /dev/null; then
@@ -149,6 +163,13 @@ install_dependencies() {
             nano \
             unzip \
             gcc \
+            procps-ng \
+            util-linux \
+            coreutils \
+            bash \
+            grep \
+            sed \
+            gawk \
             2>/dev/null || true
             
     elif command -v apk &> /dev/null; then
@@ -168,6 +189,13 @@ install_dependencies() {
             nano \
             unzip \
             build-base \
+            procps \
+            util-linux \
+            coreutils \
+            bash \
+            grep \
+            sed \
+            gawk \
             2>/dev/null || true
     else
         error "Unsupported package manager!"
@@ -182,10 +210,8 @@ stop_existing() {
     step "Stopping existing rathole monitor processes..."
     
     # Stop systemd service if exists
-    if systemctl is-active --quiet $SERVICE_NAME 2>/dev/null; then
-        systemctl stop $SERVICE_NAME
-        info "Stopped existing systemd service"
-    fi
+    systemctl stop rathole-monitor rathole-monitor-script 2>/dev/null || true
+    systemctl disable rathole-monitor rathole-monitor-script 2>/dev/null || true
     
     # Kill any running processes
     pkill -f "python3.*app.py" 2>/dev/null || true
@@ -257,11 +283,22 @@ install_python_deps() {
     fi
 }
 
-# Set proper permissions
+# Set proper permissions and validate files
 set_permissions() {
-    step "Setting proper file permissions..."
+    step "Setting proper file permissions and validating files..."
     
     cd "$PROJECT_DIR"
+    
+    # Check if required files exist
+    if [ ! -f "app.py" ]; then
+        error "app.py not found in project directory!"
+        exit 1
+    fi
+    
+    if [ ! -f "rathole_monitor.sh" ]; then
+        error "rathole_monitor.sh not found in project directory!"
+        exit 1
+    fi
     
     # Make scripts executable
     chmod +x app.py 2>/dev/null || true
@@ -280,12 +317,26 @@ set_permissions() {
     chown -R root:root "$PROJECT_DIR"
     chown root:root "$LOG_FILE"
     
-    log "File permissions set correctly"
+    # Test the monitor script
+    info "Testing monitor script..."
+    if ! bash -n "$MONITOR_SCRIPT_PATH"; then
+        error "Monitor script has syntax errors!"
+        exit 1
+    fi
+    
+    # Test script execution
+    if timeout 10 "$MONITOR_SCRIPT_PATH" help >/dev/null 2>&1; then
+        info "Monitor script test passed"
+    else
+        warn "Monitor script test failed, but continuing..."
+    fi
+    
+    log "File permissions set correctly and validated"
 }
 
-# Create systemd service
+# Create systemd service with improved configuration
 create_systemd_service() {
-    step "Creating systemd service..."
+    step "Creating systemd services..."
     
     # Determine Python executable path
     if [ -f "$PROJECT_DIR/venv/bin/python3" ]; then
@@ -294,7 +345,7 @@ create_systemd_service() {
         PYTHON_EXEC="/usr/bin/python3"
     fi
     
-    # Create service file
+    # Create main dashboard service
     cat > "/etc/systemd/system/$SERVICE_NAME.service" << EOF
 [Unit]
 Description=Rathole Monitor Dashboard
@@ -312,22 +363,19 @@ ExecStart=$PYTHON_EXEC app.py
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=always
 RestartSec=10
-StartLimitBurst=3
-StartLimitInterval=60
+StartLimitBurst=5
+KillMode=mixed
+TimeoutStopSec=30
 
 # Environment variables
 Environment=PORT=$DEFAULT_PORT
 Environment=DEBUG=false
 Environment=RATHOLE_MONITOR_SCRIPT=$MONITOR_SCRIPT_PATH
+Environment=PYTHONPATH=$PROJECT_DIR
+Environment=PYTHONUNBUFFERED=1
 
 # Resource limits
 LimitNOFILE=65536
-
-# Security settings
-NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=$PROJECT_DIR /var/log /tmp
-PrivateDevices=true
 
 # Logging
 StandardOutput=journal
@@ -338,12 +386,13 @@ SyslogIdentifier=rathole-monitor
 WantedBy=multi-user.target
 EOF
 
-    # Create monitor script service
+    # Create improved monitor script service
     cat > "/etc/systemd/system/rathole-monitor-script.service" << EOF
 [Unit]
 Description=Rathole Monitor Background Script
 Documentation=https://github.com/hayousef68/rathole_monitor
-After=network.target
+After=network.target multi-user.target
+Wants=network.target
 StartLimitIntervalSec=0
 
 [Service]
@@ -351,11 +400,19 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$PROJECT_DIR/rathole_monitor.sh daemon
+ExecStartPre=-/bin/bash -c 'sleep 5'
+ExecStart=/bin/bash $PROJECT_DIR/rathole_monitor.sh daemon
+ExecReload=/bin/kill -HUP \$MAINPID
 Restart=always
 RestartSec=30
-StartLimitBurst=3
-StartLimitInterval=60
+StartLimitBurst=5
+KillMode=mixed
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+# Environment
+Environment=LOG_FILE=$LOG_FILE
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Logging
 StandardOutput=journal
@@ -374,42 +431,61 @@ EOF
     log "Systemd services created and enabled"
 }
 
-# Start services
+# Start services with proper error handling
 start_services() {
     step "Starting services..."
     
-    # Start the monitor script first
-    if systemctl start rathole-monitor-script; then
-        info "Rathole monitor script service started"
-    else
-        warn "Failed to start monitor script service"
-    fi
-    
-    sleep 2
-    
-    # Start the dashboard
+    # First start the dashboard
+    info "Starting dashboard service..."
     if systemctl start $SERVICE_NAME; then
-        log "Rathole monitor dashboard service started successfully"
+        sleep 3
+        if systemctl is-active --quiet $SERVICE_NAME; then
+            log "Dashboard service started successfully"
+        else
+            error "Dashboard service failed to start"
+            systemctl status $SERVICE_NAME --no-pager -l
+            exit 1
+        fi
     else
         error "Failed to start dashboard service"
-        systemctl status $SERVICE_NAME --no-pager
+        systemctl status $SERVICE_NAME --no-pager -l
         exit 1
     fi
     
-    sleep 3
+    # Then start the monitor script with delay
+    info "Starting monitor script service (with 10s delay)..."
+    sleep 10
     
-    # Verify services are running
-    if systemctl is-active --quiet $SERVICE_NAME; then
-        log "Dashboard service is active and running"
+    if systemctl start rathole-monitor-script; then
+        sleep 5
+        if systemctl is-active --quiet rathole-monitor-script; then
+            log "Monitor script service started successfully"
+        else
+            warn "Monitor script service may have issues, checking logs..."
+            journalctl -u rathole-monitor-script -n 20 --no-pager
+            
+            # Try to restart once more
+            info "Attempting to restart monitor script service..."
+            systemctl restart rathole-monitor-script
+            sleep 5
+            
+            if systemctl is-active --quiet rathole-monitor-script; then
+                log "Monitor script service started on second attempt"
+            else
+                error "Monitor script service failed to start"
+                warn "Dashboard will still work, but automatic monitoring is disabled"
+                warn "You can check logs with: journalctl -u rathole-monitor-script -f"
+            fi
+        fi
     else
-        error "Dashboard service failed to start properly"
-        exit 1
+        warn "Failed to start monitor script service"
+        warn "Dashboard will still work, but automatic monitoring is disabled"
     fi
 }
 
-# Create management aliases
-create_aliases() {
-    step "Creating management aliases..."
+# Create management aliases and tools
+create_management_tools() {
+    step "Creating management tools and aliases..."
     
     # Create alias file
     cat > /root/.rathole_monitor_aliases << 'EOF'
@@ -422,6 +498,8 @@ alias rm-logs='journalctl -u rathole-monitor -f --no-pager'
 alias rm-script-logs='journalctl -u rathole-monitor-script -f --no-pager'
 alias rm-monitor='cd /root/rathole_monitor && ./rathole_monitor.sh status'
 alias rm-update='cd /root/rathole_monitor && git pull origin main && systemctl restart rathole-monitor rathole-monitor-script'
+alias rm-debug='journalctl -u rathole-monitor-script -n 50 --no-pager'
+alias rm-test='cd /root/rathole_monitor && ./rathole_monitor.sh monitor'
 EOF
 
     # Add to .bashrc if not already present
@@ -431,7 +509,83 @@ EOF
         echo "source /root/.rathole_monitor_aliases" >> /root/.bashrc
     fi
     
-    log "Management aliases created"
+    # Create management script
+    cat > /root/rathole_monitor_manager.sh << 'EOF'
+#!/bin/bash
+# Rathole Monitor Manager Script
+
+case "$1" in
+    "status")
+        echo "=== Rathole Monitor Status ==="
+        systemctl status rathole-monitor rathole-monitor-script --no-pager
+        ;;
+    "logs")
+        echo "=== Recent Dashboard Logs ==="
+        journalctl -u rathole-monitor -n 20 --no-pager
+        echo ""
+        echo "=== Recent Script Logs ==="
+        journalctl -u rathole-monitor-script -n 20 --no-pager
+        ;;
+    "restart")
+        echo "Restarting all services..."
+        systemctl restart rathole-monitor rathole-monitor-script
+        echo "Services restarted."
+        ;;
+    "debug")
+        echo "=== Debug Information ==="
+        echo "1. Service Status:"
+        systemctl status rathole-monitor rathole-monitor-script --no-pager
+        echo ""
+        echo "2. Recent Logs:"
+        journalctl -u rathole-monitor-script -n 30 --no-pager
+        echo ""
+        echo "3. File Permissions:"
+        ls -la /root/rathole_monitor/
+        echo ""
+        echo "4. Test Script:"
+        cd /root/rathole_monitor && timeout 10 ./rathole_monitor.sh help || echo "Script test failed"
+        ;;
+    *)
+        echo "Usage: $0 {status|logs|restart|debug}"
+        ;;
+esac
+EOF
+    
+    chmod +x /root/rathole_monitor_manager.sh
+    
+    log "Management tools created"
+}
+
+# Fix any potential issues
+fix_common_issues() {
+    step "Applying common issue fixes..."
+    
+    # Ensure proper PATH in environment
+    echo 'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' >> /root/.bashrc
+    
+    # Fix potential locale issues
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+    
+    # Create systemd drop-in directory for additional configuration
+    mkdir -p /etc/systemd/system/rathole-monitor-script.service.d/
+    cat > /etc/systemd/system/rathole-monitor-script.service.d/override.conf << 'EOF'
+[Service]
+# Additional environment variables
+Environment="LC_ALL=C.UTF-8"
+Environment="LANG=C.UTF-8"
+
+# Ensure all tools are available
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Additional restart conditions
+RestartPreventExitStatus=0
+SuccessExitStatus=0
+EOF
+    
+    systemctl daemon-reload
+    
+    log "Common issue fixes applied"
 }
 
 # Show installation summary
@@ -451,8 +605,8 @@ show_summary() {
     echo ""
     
     echo -e "${GREEN}✅ Service Status:${NC}"
-    echo -e "   📊 Dashboard: $(systemctl is-active rathole-monitor)"
-    echo -e "   🔍 Monitor Script: $(systemctl is-active rathole-monitor-script)"
+    echo -e "   📊 Dashboard: $(systemctl is-active rathole-monitor 2>/dev/null || echo 'inactive')"
+    echo -e "   🔍 Monitor Script: $(systemctl is-active rathole-monitor-script 2>/dev/null || echo 'inactive')"
     echo ""
     
     echo -e "${GREEN}✅ Management Commands:${NC}"
@@ -461,6 +615,8 @@ show_summary() {
     echo -e "   📋 View Logs: ${YELLOW}rm-logs${NC}"
     echo -e "   🔍 Monitor Status: ${YELLOW}rm-monitor${NC}"
     echo -e "   ⬆️  Update: ${YELLOW}rm-update${NC}"
+    echo -e "   🐛 Debug: ${YELLOW}rm-debug${NC}"
+    echo -e "   ⚙️  Manager: ${YELLOW}/root/rathole_monitor_manager.sh status${NC}"
     echo ""
     
     echo -e "${GREEN}✅ Manual Commands:${NC}"
@@ -476,13 +632,15 @@ show_summary() {
     echo -e "   ⚙️  Service Files: ${YELLOW}/etc/systemd/system/rathole-monitor*.service${NC}"
     echo ""
     
-    echo -e "${BLUE}💡 Notes:${NC}"
-    echo -e "   • Services will auto-start on system reboot"
-    echo -e "   • Dashboard monitors rathole-iran* and rathole-kharej* services"
-    echo -e "   • Run 'source ~/.bashrc' to enable aliases in current session"
+    echo -e "${BLUE}💡 Troubleshooting:${NC}"
+    echo -e "   • If monitor script fails: ${YELLOW}rm-debug${NC}"
+    echo -e "   • Check script manually: ${YELLOW}cd $PROJECT_DIR && ./rathole_monitor.sh help${NC}"
+    echo -e "   • View detailed logs: ${YELLOW}journalctl -u rathole-monitor-script -f${NC}"
+    echo -e "   • Run manager: ${YELLOW}/root/rathole_monitor_manager.sh debug${NC}"
     echo ""
     
     echo -e "${YELLOW}🔗 GitHub Repository: https://github.com/hayousef68/rathole_monitor${NC}"
+    echo -e "${GREEN}✨ Run 'source ~/.bashrc' to enable aliases in current session${NC}"
 }
 
 # Handle different installation modes
@@ -495,44 +653,11 @@ install_basic() {
     setup_project
     install_python_deps
     set_permissions
+    fix_common_issues
     create_systemd_service
     start_services
-    create_aliases
+    create_management_tools
     show_summary
-}
-
-install_multiple() {
-    local instances=${1:-3}
-    info "Installing $instances concurrent instances..."
-    
-    for i in $(seq 1 $instances); do
-        local port=$((DEFAULT_PORT + i - 1))
-        
-        # Create separate service for each instance
-        cat > "/etc/systemd/system/rathole-monitor-$i.service" << EOF
-[Unit]
-Description=Rathole Monitor Dashboard Instance $i
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=$PROJECT_DIR
-ExecStart=/usr/bin/python3 app.py
-Environment=PORT=$port
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        
-        systemctl daemon-reload
-        systemctl enable rathole-monitor-$i
-        systemctl start rathole-monitor-$i
-        
-        info "Instance $i started on port $port"
-    done
 }
 
 # Uninstall function
@@ -545,13 +670,15 @@ uninstall() {
     
     # Remove service files
     rm -f /etc/systemd/system/rathole-monitor*.service
+    rm -rf /etc/systemd/system/rathole-monitor-script.service.d/
     systemctl daemon-reload
     
     # Remove project directory
     rm -rf "$PROJECT_DIR"
     
-    # Remove aliases
+    # Remove management tools
     rm -f /root/.rathole_monitor_aliases
+    rm -f /root/rathole_monitor_manager.sh
     sed -i '/rathole_monitor_aliases/d' /root/.bashrc 2>/dev/null || true
     
     log "Rathole Monitor uninstalled successfully"
@@ -565,31 +692,28 @@ show_usage() {
     echo ""
     echo "Options:"
     echo "  -p, --port PORT       Set dashboard port (default: 3000)"
-    echo "  -m, --multiple NUM    Install multiple instances"
     echo "  -u, --uninstall       Uninstall Rathole Monitor"
     echo "  -h, --help            Show this help"
     echo ""
     echo "Examples:"
     echo "  $0                    # Basic installation"
     echo "  $0 -p 8080           # Install on port 8080"
-    echo "  $0 -m 3              # Install 3 concurrent instances"
     echo "  $0 -u                # Uninstall"
     echo ""
     echo "One-liner installation:"
     echo "  curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash"
+    echo ""
+    echo "Troubleshooting after installation:"
+    echo "  rm-debug              # Show debug information"
+    echo "  rm-status             # Check services status"
+    echo "  /root/rathole_monitor_manager.sh debug  # Detailed debugging"
 }
 
 # Parse command line arguments
-INSTALL_TYPE="basic"
 while [[ $# -gt 0 ]]; do
     case $1 in
         -p|--port)
             DEFAULT_PORT="$2"
-            shift 2
-            ;;
-        -m|--multiple)
-            INSTALL_TYPE="multiple"
-            MULTIPLE_INSTANCES="$2"
             shift 2
             ;;
         -u|--uninstall)
@@ -610,19 +734,7 @@ done
 
 # Main execution
 main() {
-    case $INSTALL_TYPE in
-        basic)
-            install_basic
-            ;;
-        multiple)
-            install_basic
-            install_multiple "$MULTIPLE_INSTANCES"
-            ;;
-        *)
-            error "Unknown installation type"
-            exit 1
-            ;;
-    esac
+    install_basic
 }
 
 # Set trap for cleanup on exit
