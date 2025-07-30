@@ -8,7 +8,9 @@
 
 
 دستور یک خطی برای نصب:
-bashcurl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash
+
+
 ویژگی‌های کلیدی اسکریپت بهبود یافته:
 🚀 نصب خودکار کامل:
 
