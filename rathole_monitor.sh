@@ -1,31 +1,18 @@
 #!/bin/bash
-
-# Rathole Tunnel Monitor Script - Enhanced Version
+# Rathole Tunnel Monitor Script
 # Automatically monitors and restarts Rathole tunnel services
-# Supports rathole-iran(port) and rathole-kharej(port) naming patterns
-
-# Bash safety settings
-set -euo pipefail
-IFS=$'\n\t'
-
 # Configuration
-SCRIPT_VERSION="2.0.0"
-SCRIPT_NAME="rathole-monitor"
-INSTALL_DIR="/root/rathole_monitor"
-GITHUB_REPO="https://github.com/hayousef68/rathole_monitor.git"
 LOG_FILE="/var/log/rathole_monitor.log"
-CHECK_INTERVAL=300 # 5 minutes in seconds
+CHECK_INTERVAL=300  # 5 minutes in seconds
 MAX_RETRIES=3
 RETRY_DELAY=10
 ERROR_CHECK_PERIOD="5 minutes ago"
 MIN_CRITICAL_ERRORS=1
 ERROR_FREQUENCY_THRESHOLD=5
 ENABLE_SMART_ERROR_DETECTION=true
-
 # Rathole configuration paths
 RATHOLE_CONFIG_DIR="/etc/rathole"
-RATHOLE_SERVICE_PATTERNS=("rathole-iran*" "rathole-kharej*")
-
+RATHOLE_SERVICE_PREFIX="rathole"
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -873,160 +860,69 @@ CRITICAL_ERRORS=(
     "SYNC"
     "SYNCED"
 )
-# Trap for cleanup on exit
-trap cleanup EXIT INT TERM
-
-cleanup() {
-    local exit_code=$?
-    if [[ $exit_code -ne 0 ]]; then
-        log_message "ERROR" "Script exited with error code: $exit_code"
-    fi
-    exit $exit_code
-}
-
 # Function to log messages with proper format
 log_message() {
     local level="$1"
     local message="$2"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    
     # Ensure log directory exists
     mkdir -p "$(dirname "$LOG_FILE")"
-    
     # Write to log file and display on screen
     echo -e "${timestamp} [${level}] ${message}" | tee -a "$LOG_FILE"
 }
-
-# Function to check if running as root
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        log_message "ERROR" "This script must be run as root"
-        exit 1
-    fi
-}
-
-# Function to install system dependencies
-install_dependencies() {
-    log_message "INFO" "Installing system dependencies..."
-    
-    if command -v apt-get &>/dev/null; then
-        apt-get update -qq
-        apt-get install -y python3 python3-pip python3-venv git curl wget systemd-dev
-        apt-get install -y python3-flask python3-requests python3-psutil 2>/dev/null || true
-    elif command -v yum &>/dev/null; then
-        yum install -y python3 python3-pip git curl wget systemd-devel
-    elif command -v dnf &>/dev/null; then
-        dnf install -y python3 python3-pip git curl wget systemd-devel
-    elif command -v apk &>/dev/null; then
-        apk add --no-cache python3 py3-pip git curl wget systemd-dev
-    else
-        log_message "ERROR" "Unsupported package manager"
-        exit 1
-    fi
-}
-
-# Function to setup project directory
-setup_project() {
-    log_message "INFO" "Setting up project directory..."
-    
-    # Remove existing directory if it exists
-    if [[ -d "$INSTALL_DIR" ]]; then
-        rm -rf "$INSTALL_DIR"
-    fi
-    
-    # Clone repository
-    log_message "INFO" "Cloning repository from GitHub..."
-    git clone "$GITHUB_REPO" "$INSTALL_DIR" || {
-        log_message "ERROR" "Failed to clone repository"
-        exit 1
-    }
-    
-    cd "$INSTALL_DIR"
-    
-    # Set proper permissions
-    chmod +x *.sh 2>/dev/null || true
-    chmod 644 *.py 2>/dev/null || true
-    
-    # Install Python dependencies
-    install_python_deps
-}
-
-# Function to install Python dependencies
-install_python_deps() {
-    log_message "INFO" "Installing Python dependencies..."
-    
-    if [[ -f "requirements.txt" ]]; then
-        # Try with virtual environment first
-        if python3 -m venv venv 2>/dev/null; then
-            source venv/bin/activate
-            pip install -r requirements.txt --quiet || {
-                log_message "WARNING" "Failed to install requirements with venv"
-            }
-        else
-            # Fallback to system-wide installation
-            python3 -m pip install -r requirements.txt --quiet --break-system-packages 2>/dev/null || {
-                log_message "WARNING" "Failed to install requirements system-wide"
-            }
-        fi
-    else
-        # Install essential packages
-        if python3 -m venv venv 2>/dev/null; then
-            source venv/bin/activate
-            pip install flask requests psutil --quiet || {
-                log_message "WARNING" "Failed to install essential packages with venv"
-            }
-        else
-            python3 -m pip install flask requests psutil --quiet --break-system-packages 2>/dev/null || {
-                log_message "WARNING" "Failed to install essential packages system-wide"
-            }
-        fi
-    fi
-}
-
 # Function to check if a port is listening
 check_port() {
     local port="$1"
-    
     # Validate port number
-    if ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
         return 1
     fi
-    
     # Check if port is listening using multiple methods
-    if command -v netstat &>/dev/null; then
+    if command -v netstat >/dev/null 2>&1; then
         if netstat -tuln 2>/dev/null | grep -q ":${port} "; then
             return 0
         fi
     fi
-    
-    if command -v ss &>/dev/null; then
+    if command -v ss >/dev/null 2>&1; then
         if ss -tuln 2>/dev/null | grep -q ":${port} "; then
             return 0
         fi
     fi
-    
     # Fallback to lsof if available
-    if command -v lsof &>/dev/null; then
-        if lsof -i ":${port}" -sTCP:LISTEN &>/dev/null; then
+    if command -v lsof >/dev/null 2>&1; then
+        if lsof -i ":${port}" -sTCP:LISTEN >/dev/null 2>&1; then
             return 0
         fi
     fi
-    
     return 1
 }
-
+# Function to extract port from service name
+extract_port_from_service_name() {
+    local service_name="$1"
+    # Extract port from service name pattern: rathole-iran1234.service or rathole-kharej5678.service
+    local port=$(echo "$service_name" | sed -E 's/rathole-(iran|kharej)([0-9]+)\.service/\2/')
+    if [[ "$port" =~ ^[0-9]+$ ]]; then
+        echo "$port"
+    else
+        echo ""
+    fi
+}
 # Function to extract ports from rathole config file
 get_service_ports() {
     local service_name="$1"
     local config_file=""
     local ports=""
-    
-    # Try to find config file from service definition
-    if command -v systemctl &>/dev/null; then
-        local exec_start=$(systemctl show "$service_name" --property=ExecStart --value 2>/dev/null || echo "")
-        config_file=$(echo "$exec_start" | grep -oE '/[^[:space:]]*\.toml' | head -1 || echo "")
+    # First try to extract port from service name
+    local port_from_name=$(extract_port_from_service_name "$service_name")
+    if [[ -n "$port_from_name" ]]; then
+        echo "$port_from_name"
+        return
     fi
-    
+    # Try to find config file from service definition
+    if command -v systemctl >/dev/null 2>&1; then
+        local exec_start=$(systemctl show "$service_name" --property=ExecStart --value 2>/dev/null)
+        config_file=$(echo "$exec_start" | grep -oE '/[^[:space:]]*\.toml' | head -1)
+    fi
     # If config file not found in service, try common locations
     if [[ ! -f "$config_file" ]]; then
         local service_base=$(echo "$service_name" | sed 's/\.service$//')
@@ -1042,39 +938,32 @@ get_service_ports() {
             fi
         done
     fi
-    
     if [[ -f "$config_file" ]]; then
         # Extract ports from TOML config file
         ports=$(grep -E "(bind_addr|remote_addr).*:[0-9]+" "$config_file" 2>/dev/null | \
-               grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || echo "")
-        
+                grep -oE '[0-9]+' | sort -u | tr '\n' ' ')
         # Also check for port definitions in different formats
         if [[ -z "$ports" ]]; then
             ports=$(grep -E "port.*=.*[0-9]+" "$config_file" 2>/dev/null | \
-                   grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || echo "")
+                    grep -oE '[0-9]+' | sort -u | tr '\n' ' ')
         fi
     fi
-    
     # Clean up and return ports
     echo "$ports" | tr -s ' ' | sed 's/^ *//;s/ *$//'
 }
-
 # Function to check service status with proper error handling
 check_service_status() {
     local service_name="$1"
-    
-    if ! command -v systemctl &>/dev/null; then
+    if ! command -v systemctl >/dev/null 2>&1; then
         log_message "ERROR" "systemctl command not found"
         return 1
     fi
-    
-    local status=$(systemctl is-active "$service_name" 2>/dev/null || echo "unknown")
-    
+    local status=$(systemctl is-active "$service_name" 2>/dev/null)
     case "$status" in
         active)
             return 0
             ;;
-        inactive|failed|dead|unknown)
+        inactive|failed|dead)
             return 1
             ;;
         *)
@@ -1082,104 +971,59 @@ check_service_status() {
             ;;
     esac
 }
-
 # Function to check if an error is critical
 is_critical_error() {
     local error_line="$1"
-    
     # Skip empty lines
     if [[ -z "$error_line" ]]; then
         return 1
     fi
-    
-    # Define critical patterns inline (you can customize these)
-    local critical_patterns=(
-        "panic"
-        "fatal"
-        "segmentation fault"
-        "core dumped"
-        "out of memory"
-        "failed to start"
-        "process exited"
-        "service stopped"
-        "service failed"
-        "bind failed"
-        "address already in use"
-        "permission denied"
-        "configuration error"
-        "config error"
-        "invalid config"
-    )
-    
-    # Define ignored patterns inline (you can customize these)
-    local ignored_patterns=(
-        "connection refused"
-        "connection reset by peer"
-        "broken pipe"
-        "connection timeout"
-        "temporary failure in name resolution"
-        "no route to host"
-        "connection timed out"
-        "network is unreachable"
-        "connection closed"
-        "connection lost"
-        "failed to establish connection"
-    )
-    
     # Check if error matches any critical pattern
-    for pattern in "${critical_patterns[@]}"; do
+    for pattern in "${CRITICAL_ERRORS[@]}"; do
         if [[ -n "$pattern" ]] && echo "$error_line" | grep -qi "$pattern"; then
-            return 0 # Critical error found
+            return 0  # Critical error found
         fi
     done
-    
     # Check if error matches any ignored pattern (non-critical)
-    for pattern in "${ignored_patterns[@]}"; do
+    for pattern in "${IGNORED_ERRORS[@]}"; do
         if [[ -n "$pattern" ]] && echo "$error_line" | grep -qi "$pattern"; then
-            return 1 # Non-critical error, ignore it
+            return 1  # Non-critical error, ignore it
         fi
     done
-    
-    # If not in either list, consider it potentially critical
-    return 0
+    # If lists are empty or not matched, check for common critical patterns
+    if echo "$error_line" | grep -qi "panic\|fatal\|segmentation fault\|core dumped"; then
+        return 0
+    fi
+    # Default to non-critical if no patterns defined
+    return 1
 }
-
 # Function to check if service has recent critical errors
 check_service_errors() {
     local service_name="$1"
     local time_range="${ERROR_CHECK_PERIOD:-5 minutes ago}"
-    
     # Check if journalctl is available
-    if ! command -v journalctl &>/dev/null; then
+    if ! command -v journalctl >/dev/null 2>&1; then
         log_message "WARNING" "journalctl not available, skipping error check"
         return 0
     fi
-    
     # Get recent error/warning logs
-    local error_logs=$(journalctl -u "$service_name" --since "$time_range" -p warning --no-pager -q 2>/dev/null || echo "")
-    
+    local error_logs=$(journalctl -u "$service_name" --since "$time_range" -p warning --no-pager -q 2>/dev/null)
     if [[ -z "$error_logs" ]]; then
-        return 0 # No errors found
+        return 0  # No errors found
     fi
-    
     # Check each error line
     local critical_error_count=0
     local total_error_count=0
-    
     while IFS= read -r line; do
         if [[ -n "$line" ]]; then
             total_error_count=$((total_error_count + 1))
             if is_critical_error "$line"; then
                 critical_error_count=$((critical_error_count + 1))
                 log_message "WARNING" "Critical error detected in $service_name: $line"
-            else
-                log_message "DEBUG" "Non-critical error ignored in $service_name: $line"
             fi
         fi
     done <<< "$error_logs"
-    
     log_message "INFO" "Service $service_name: $total_error_count total errors, $critical_error_count critical errors"
-    
     # Only fail if we have critical errors above threshold
     if [[ $critical_error_count -ge $MIN_CRITICAL_ERRORS ]]; then
         return 1
@@ -1187,14 +1031,11 @@ check_service_errors() {
         return 0
     fi
 }
-
 # Function to restart service with retries
 restart_service() {
     local service_name="$1"
     local retry_count=0
-    
     log_message "WARNING" "Attempting to restart service: $service_name"
-    
     while [[ $retry_count -lt $MAX_RETRIES ]]; do
         if systemctl restart "$service_name" 2>/dev/null; then
             sleep $RETRY_DELAY
@@ -1207,32 +1048,25 @@ restart_service() {
         else
             log_message "ERROR" "Failed to issue restart command for $service_name"
         fi
-        
         retry_count=$((retry_count + 1))
         log_message "ERROR" "Failed to restart $service_name (attempt $retry_count/$MAX_RETRIES)"
-        
         if [[ $retry_count -lt $MAX_RETRIES ]]; then
             sleep $RETRY_DELAY
         fi
     done
-    
     log_message "ERROR" "Failed to restart $service_name after $MAX_RETRIES attempts"
     return 1
 }
-
 # Function to check tunnel connectivity
 check_tunnel_connectivity() {
     local service_name="$1"
     local ports=$(get_service_ports "$service_name")
     local all_ports_ok=true
-    
     if [[ -z "$ports" ]]; then
         log_message "DEBUG" "No ports found for service $service_name, skipping port check"
         return 0
     fi
-    
     log_message "DEBUG" "Checking ports for $service_name: $ports"
-    
     for port in $ports; do
         if [[ -n "$port" ]] && ! check_port "$port"; then
             log_message "WARNING" "Port $port is not listening for service $service_name"
@@ -1241,39 +1075,32 @@ check_tunnel_connectivity() {
             log_message "DEBUG" "Port $port is listening for service $service_name"
         fi
     done
-    
     if [[ "$all_ports_ok" == "true" ]]; then
         return 0
     else
         return 1
     fi
 }
-
 # Function to monitor single service
 monitor_service() {
     local service_name="$1"
     local needs_restart=false
-    
     log_message "INFO" "Checking service: $service_name"
-    
     # Check if service is active
     if ! check_service_status "$service_name"; then
         log_message "ERROR" "Service $service_name is not active"
         needs_restart=true
     fi
-    
     # Check for recent errors (only if service is active)
     if [[ "$needs_restart" == "false" ]] && ! check_service_errors "$service_name"; then
         log_message "WARNING" "Service $service_name has recent critical errors"
         needs_restart=true
     fi
-    
     # Check port connectivity (only if service is active)
     if [[ "$needs_restart" == "false" ]] && ! check_tunnel_connectivity "$service_name"; then
         log_message "WARNING" "Service $service_name has connectivity issues"
         needs_restart=true
     fi
-    
     # Restart if needed
     if [[ "$needs_restart" == "true" ]]; then
         restart_service "$service_name"
@@ -1281,38 +1108,26 @@ monitor_service() {
         log_message "INFO" "Service $service_name is healthy"
     fi
 }
-
-# Function to get all rathole services
+# Function to get all rathole services with specific patterns
 get_rathole_services() {
-    if ! command -v systemctl &>/dev/null; then
+    if ! command -v systemctl >/dev/null 2>&1; then
         log_message "ERROR" "systemctl command not found"
         return 1
     fi
-    
-    # Find all services that match rathole patterns
-    local services=""
-    for pattern in "${RATHOLE_SERVICE_PATTERNS[@]}"; do
-        local found_services=$(systemctl list-units --type=service --state=loaded --no-legend 2>/dev/null | \
-                              awk '{print $1}' | \
-                              grep -E "^${pattern}\.service$" | \
-                              sort || echo "")
-        if [[ -n "$found_services" ]]; then
-            services="$services$found_services"$'\n'
-        fi
-    done
-    
-    echo "$services" | grep -v '^$' | sort -u
+    # Find all services matching rathole-iran*.service or rathole-kharej*.service
+    systemctl list-units --type=service --all --no-legend 2>/dev/null | \
+    awk '{print $1}' | \
+    grep -E "^rathole-(iran|kharej)[0-9]+\.service$" | \
+    sort
 }
-
 # Function to display service status
 display_status() {
     local service_name="$1"
-    local status=$(systemctl is-active "$service_name" 2>/dev/null || echo "unknown")
+    local status=$(systemctl is-active "$service_name" 2>/dev/null)
     local uptime=""
     local ports=$(get_service_ports "$service_name")
-    
     if [[ "$status" == "active" ]]; then
-        uptime=$(systemctl show "$service_name" --property=ActiveEnterTimestamp --value 2>/dev/null | awk '{print $2, $3}' || echo "unknown")
+        uptime=$(systemctl show "$service_name" --property=ActiveEnterTimestamp --value 2>/dev/null | awk '{print $2, $3}')
         echo -e "${GREEN}✓${NC} $service_name - ${GREEN}Active${NC} (Since: $uptime)"
         if [[ -n "$ports" ]]; then
             echo -e "  ${BLUE}Ports:${NC} $ports"
@@ -1321,49 +1136,38 @@ display_status() {
         echo -e "${RED}✗${NC} $service_name - ${RED}$status${NC}"
     fi
 }
-
 # Main monitoring function
 main_monitor() {
     log_message "INFO" "Starting Rathole tunnel monitoring..."
-    
     # Get all rathole services
     local services=$(get_rathole_services)
-    
     if [[ -z "$services" ]]; then
-        log_message "WARNING" "No rathole services found with patterns: ${RATHOLE_SERVICE_PATTERNS[*]}"
+        log_message "WARNING" "No rathole services found matching pattern: rathole-(iran|kharej)PORT.service"
         return 1
     fi
-    
     log_message "INFO" "Found rathole services: $(echo $services | tr '\n' ' ')"
-    
     # Monitor each service
     while IFS= read -r service; do
         if [[ -n "$service" ]]; then
             monitor_service "$service"
         fi
     done <<< "$services"
-    
     log_message "INFO" "Monitoring cycle completed"
 }
-
 # Function to show current status
 show_status() {
     echo -e "${BLUE}=== Rathole Tunnel Status ===${NC}"
     echo ""
-    
     local services=$(get_rathole_services)
-    
     if [[ -z "$services" ]]; then
-        echo -e "${YELLOW}No rathole services found with patterns: ${RATHOLE_SERVICE_PATTERNS[*]}${NC}"
+        echo -e "${YELLOW}No rathole services found matching pattern: rathole-(iran|kharej)PORT.service${NC}"
         return 1
     fi
-    
     while IFS= read -r service; do
         if [[ -n "$service" ]]; then
             display_status "$service"
         fi
     done <<< "$services"
-    
     echo ""
     echo -e "${BLUE}=== Recent Log Entries ===${NC}"
     if [[ -f "$LOG_FILE" ]]; then
@@ -1372,173 +1176,97 @@ show_status() {
         echo "No log file found"
     fi
 }
-
 # Function to run as daemon
 run_daemon() {
     log_message "INFO" "Starting Rathole Monitor Daemon (Check interval: ${CHECK_INTERVAL}s)"
-    
     # Create log file if it doesn't exist
     touch "$LOG_FILE"
-    
     # Set up signal handlers for graceful shutdown
     trap 'log_message "INFO" "Received signal, shutting down..."; exit 0' SIGTERM SIGINT
-    
     while true; do
         main_monitor
         sleep $CHECK_INTERVAL
     done
 }
-
-# Function to create systemd service for the monitor itself
-create_monitor_service() {
+# Function to install as systemd service
+install_service() {
     local script_path=$(realpath "$0")
-    
-    log_message "INFO" "Creating systemd service for rathole monitor..."
-    
+    # Check if running as root
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}Error: This function must be run as root${NC}"
+        exit 1
+    fi
     cat > /etc/systemd/system/rathole-monitor.service << EOF
 [Unit]
-Description=Rathole Tunnel Monitor Service
-Documentation=https://github.com/hayousef68/rathole_monitor
+Description=Rathole Tunnel Monitor
 After=network.target
-Wants=network.target
-
 [Service]
 Type=simple
 User=root
-Group=root
-WorkingDirectory=$INSTALL_DIR
 ExecStart=$script_path daemon
-ExecReload=/bin/kill -HUP \$MAINPID
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=rathole-monitor
-
-# Security settings
-NoNewPrivileges=yes
-ProtectHome=yes
-ProtectSystem=strict
-ReadWritePaths=$LOG_FILE $(dirname "$LOG_FILE") $INSTALL_DIR
-
 [Install]
 WantedBy=multi-user.target
 EOF
-
     systemctl daemon-reload
     systemctl enable rathole-monitor.service
-    
-    log_message "INFO" "Rathole monitor service created and enabled"
-}
-
-# Function to start the monitor service
-start_monitor_service() {
-    if systemctl is-active --quiet rathole-monitor.service; then
-        log_message "INFO" "Stopping existing rathole-monitor service..."
-        systemctl stop rathole-monitor.service
-    fi
-    
     systemctl start rathole-monitor.service
-    
-    if systemctl is-active --quiet rathole-monitor.service; then
-        log_message "INFO" "Rathole monitor service started successfully"
-        log_message "INFO" "Use 'systemctl status rathole-monitor' to check status"
-        log_message "INFO" "Use 'journalctl -u rathole-monitor -f' to view logs"
-    else
-        log_message "ERROR" "Failed to start rathole monitor service"
-        return 1
-    fi
+    echo -e "${GREEN}Rathole monitor service installed and started${NC}"
+    echo "Use 'systemctl status rathole-monitor' to check status"
+    echo "Use 'journalctl -u rathole-monitor -f' to view logs"
 }
-
-# Function to install complete system
-install_system() {
-    log_message "INFO" "Starting Rathole Monitor installation..."
-    
-    check_root
-    install_dependencies
-    setup_project
-    create_monitor_service
-    start_monitor_service
-    
-    # Start the web dashboard if available
-    if [[ -f "$INSTALL_DIR/run.sh" ]]; then
-        log_message "INFO" "Starting web dashboard..."
-        cd "$INSTALL_DIR"
-        bash run.sh &
-        log_message "INFO" "Web dashboard started in background"
-    fi
-    
-    log_message "INFO" "Installation completed successfully!"
-    log_message "INFO" "Monitor service: systemctl status rathole-monitor"
-    log_message "INFO" "View logs: journalctl -u rathole-monitor -f"
-    log_message "INFO" "Manual monitoring: $0 monitor"
-    log_message "INFO" "Show status: $0 status"
-}
-
 # Function to uninstall service
 uninstall_service() {
-    log_message "INFO" "Uninstalling rathole monitor service..."
-    
-    systemctl stop rathole-monitor.service 2>/dev/null || true
-    systemctl disable rathole-monitor.service 2>/dev/null || true
+    # Check if running as root
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}Error: This function must be run as root${NC}"
+        exit 1
+    fi
+    systemctl stop rathole-monitor.service 2>/dev/null
+    systemctl disable rathole-monitor.service 2>/dev/null
     rm -f /etc/systemd/system/rathole-monitor.service
     systemctl daemon-reload
-    
-    # Optionally remove installation directory
-    read -p "Remove installation directory $INSTALL_DIR? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        rm -rf "$INSTALL_DIR"
-        log_message "INFO" "Installation directory removed"
-    fi
-    
-    log_message "INFO" "Rathole monitor service uninstalled"
+    echo -e "${GREEN}Rathole monitor service uninstalled${NC}"
 }
-
 # Help function
 show_help() {
-    cat << EOF
-Rathole Tunnel Monitor Script v$SCRIPT_VERSION
-
-USAGE:
-    $0 [COMMAND]
-
-COMMANDS:
-    install     Install the complete monitoring system
-    monitor     Run monitoring check once
-    daemon      Run as daemon (continuous monitoring)
-    status      Show current status of all rathole services
-    uninstall   Uninstall the monitoring service
-    help        Show this help message
-
-EXAMPLES:
-    $0 install     # Install complete system
-    $0 monitor     # Run monitoring once
-    $0 daemon      # Run continuous monitoring
-    $0 status      # Show status
-
-CONFIGURATION:
-    Installation directory: $INSTALL_DIR
-    Log file: $LOG_FILE
-    Check interval: ${CHECK_INTERVAL}s
-    Max retries: $MAX_RETRIES
-    Service patterns: ${RATHOLE_SERVICE_PATTERNS[*]}
-
-GITHUB:
-    Repository: $GITHUB_REPO
-    
-For more information, visit the GitHub repository.
-EOF
+    echo "Rathole Tunnel Monitor Script"
+    echo ""
+    echo "Usage: $0 [OPTION]"
+    echo ""
+    echo "Options:"
+    echo "  monitor      Run monitoring once"
+    echo "  daemon       Run as daemon (continuous monitoring)"
+    echo "  status       Show current status of all rathole services"
+    echo "  install      Install as systemd service"
+    echo "  uninstall    Uninstall systemd service"
+    echo "  help         Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0 monitor          # Run monitoring once"
+    echo "  $0 daemon           # Run continuous monitoring"
+    echo "  $0 status           # Show status"
+    echo "  $0 install          # Install as service"
+    echo ""
+    echo "Configuration:"
+    echo "  Log file: $LOG_FILE"
+    echo "  Check interval: ${CHECK_INTERVAL}s"
+    echo "  Max retries: $MAX_RETRIES"
+    echo "  Smart error detection: $ENABLE_SMART_ERROR_DETECTION"
+    echo "  Config directory: $RATHOLE_CONFIG_DIR"
+    echo "  Service patterns: rathole-iran*.service, rathole-kharej*.service"
 }
-
 # Create log directory if it doesn't exist
 mkdir -p "$(dirname "$LOG_FILE")"
-
-# Main script logic
-case "${1:-help}" in
-    install)
-        install_system
-        ;;
+# Main script logic with better default handling
+if [[ $# -eq 0 ]]; then
+    show_status
+    exit 0
+fi
+case "$1" in
     monitor)
         main_monitor
         ;;
@@ -1548,14 +1276,17 @@ case "${1:-help}" in
     status)
         show_status
         ;;
+    install)
+        install_service
+        ;;
     uninstall)
         uninstall_service
         ;;
-    help|--help|-h|"")
+    help|--help|-h)
         show_help
         ;;
     *)
-        echo -e "${RED}Unknown command: $1${NC}"
+        echo -e "${RED}Unknown option: $1${NC}"
         echo "Use '$0 help' for usage information"
         exit 1
         ;;
