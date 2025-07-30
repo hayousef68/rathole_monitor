@@ -1,6 +1,6 @@
 #!/bin/bash
 # Rathole Monitor - Auto Run Script
-# Usage: curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh| bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/run.sh | bash
 set -e
 
 # Colors for output
@@ -95,6 +95,9 @@ setup_project() {
     if [ -f "requirements.txt" ]; then
         log "Installing Python dependencies..."
         python3 -m pip install -r requirements.txt
+    else
+        log "Installing basic Python dependencies..."
+        python3 -m pip install flask requests psutil --quiet
     fi
 }
 
@@ -118,7 +121,7 @@ ExecStart=/usr/bin/python3 app.py
 Restart=always
 RestartSec=10
 Environment=PORT=$DEFAULT_PORT
-Environment=RATHOLE_MONITOR_SCRIPT=$RATHOLE_MONITOR_DIR/rathole_monitor.sh  # اضافه کردن متغیر محیطی ضروری
+Environment=RATHOLE_MONITOR_SCRIPT=$RATHOLE_MONITOR_DIR/rathole_monitor.sh
 
 [Install]
 WantedBy=multi-user.target
@@ -139,15 +142,8 @@ start_app() {
         exit 1
     fi
     
-    # Determine Python executable
-    if [ -f "venv/bin/python3" ]; then
-        PYTHON_CMD="venv/bin/python3"
-    else
-        PYTHON_CMD="python3"
-    fi
-    
     # Start in background
-    nohup $PYTHON_CMD app.py > "$LOG_FILE" 2>&1 &
+    nohup python3 app.py > "$LOG_FILE" 2>&1 &
     APP_PID=$!
     
     # Wait a moment and check if process is running
@@ -157,38 +153,10 @@ start_app() {
         log "📋 Process ID: $APP_PID"
         log "🌐 Port: $DEFAULT_PORT"
         log "📝 Log file: $LOG_FILE"
-        log "🔍 Check status: ps aux | grep app.py"
-        log "📊 View logs: tail -f $LOG_FILE"
     else
         error "Failed to start application"
         exit 1
     fi
-}
-
-start_multiple() {
-    local instances=${1:-3}
-    log "Starting $instances concurrent instances..."
-    
-    # Determine Python executable
-    if [ -f "$PROJECT_DIR/venv/bin/python3" ]; then
-        PYTHON_CMD="$PROJECT_DIR/venv/bin/python3"
-    else
-        PYTHON_CMD="python3"
-    fi
-    
-    for i in $(seq 1 $instances); do
-        local port=$((DEFAULT_PORT + i - 1))
-        log "Starting instance $i on port $port..."
-        cd "$PROJECT_DIR"
-        PORT=$port nohup $PYTHON_CMD app.py > "/var/log/rathole_monitor_$i.log" 2>&1 &
-        local pid=$!
-        sleep 1
-        if kill -0 "$pid" 2>/dev/null; then
-            info "Instance $i started (PID: $pid, Port: $port)"
-        else
-            error "Failed to start instance $i"
-        fi
-    done
 }
 
 show_usage() {
@@ -196,7 +164,6 @@ show_usage() {
     echo "Options:"
     echo "  -p, --port PORT    Set port number (default: 3000)"
     echo "  -s, --service      Create systemd service"
-    echo "  -m, --multiple N   Start N concurrent instances"
     echo "  -h, --help         Show this help message"
 }
 
@@ -210,10 +177,6 @@ parse_args() {
             -s|--service)
                 CREATE_SERVICE=true
                 shift
-                ;;
-            -m|--multiple)
-                MULTIPLE_INSTANCES="$2"
-                shift 2
                 ;;
             -h|--help)
                 show_usage
@@ -238,16 +201,18 @@ main() {
     
     if [[ "$CREATE_SERVICE" == true ]]; then
         create_service
-    fi
-    
-    if [[ -n "$MULTIPLE_INSTANCES" ]]; then
-        start_multiple "$MULTIPLE_INSTANCES"
     else
         start_app
     fi
     
     log "🎉 Setup completed successfully!"
     log "💡 Run '$0 -h' for more options"
+    
+    if [[ "$CREATE_SERVICE" == true ]]; then
+        log "✅ Service installed. Use 'systemctl start rathole-monitor' to start it"
+        log "🔍 Check status: systemctl status rathole-monitor"
+        log "📊 View logs: journalctl -u rathole-monitor -f"
+    fi
 }
 
 # Run main function
