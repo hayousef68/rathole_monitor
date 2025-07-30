@@ -25,7 +25,7 @@
 ### نصب با یک دستور:
 
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/your-repo/rathole-monitor/main/install.sh
+wget -O install.sh https://raw.githubusercontent.com/hayousef68/rathole-monitor/main/install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```
@@ -34,7 +34,7 @@ sudo ./install.sh
 
 1. **دانلود فایل‌ها:**
 ```bash
-git clone https://github.com/your-repo/rathole-monitor.git
+git clone https://github.com/hayousef68/rathole-monitor.git
 cd rathole-monitor
 ```
 
