@@ -25,7 +25,7 @@
 ### نصب با یک دستور:
 
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/hayousef68/rathole-monitor/main/install.sh
+wget -O install.sh https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/install.sh
 chmod +x install.sh
 sudo ./install.sh
 ```
