@@ -1,367 +1,233 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-وب سرور ساده برای پنل مانیتور تانل‌های Rathole
-Simple Web Server for Rathole Monitor Panel
-"""
+# وب‌سرور ساده با API برای وضعیت/ریستارت تانل‌ها
 
 import os
 import json
-import threading
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+import time
+import subprocess
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
-import logging
 
-class RatholeWebHandler(SimpleHTTPRequestHandler):
-    """کلاس مدیریت درخواست‌های وب"""
-    
-    def __init__(self, *args, monitor=None, **kwargs):
-        self.monitor = monitor
-        super().__init__(*args, **kwargs)
-    
-    def do_GET(self):
-        """مدیریت درخواست‌های GET"""
-        parsed_url = urlparse(self.path)
-        
-        # API endpoints
-        if parsed_url.path == '/api/status':
-            self.send_json_response(self.get_status())
-        elif parsed_url.path == '/':
-            # سرو کردن صفحه اصلی
-            self.serve_main_page()
-        else:
-            # فایل‌های استاتیک
-            super().do_GET()
-    
-    def do_POST(self):
-        """مدیریت درخواست‌های POST"""
-        parsed_url = urlparse(self.path)
-        content_length = int(self.headers.get('Content-Length', 0))
-        post_data = self.rfile.read(content_length).decode('utf-8')
-        
+MONITOR_DIR = "/root/rathole-monitor"
+CONFIG_FILE = os.path.join(MONITOR_DIR, "config.json")
+START_TIME_FILE = os.path.join(MONITOR_DIR, "start_time")
+
+def run_cmd(cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+def is_active(service_name: str) -> bool:
+    r = run_cmd(["systemctl", "is-active", service_name])
+    return r.stdout.strip() == "active"
+
+def list_rathole_units():
+    r = run_cmd(["systemctl", "list-units", "--type=service", "--all", "--no-legend", "--plain"])
+    units = []
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        unit = parts[0]
+        if unit.endswith(".service") and "rathole" in unit:
+            units.append(unit[:-8])
+    return sorted(set(units))
+
+def load_config():
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_config(cfg):
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+def uptime_str():
+    try:
+        with open(START_TIME_FILE, "r", encoding="utf-8") as f:
+            st = f.read().strip()
+        start = None
         try:
-            data = json.loads(post_data) if post_data else {}
-        except json.JSONDecodeError:
-            data = {}
-        
-        if parsed_url.path == '/api/restart-tunnel':
-            response = self.restart_tunnel(data.get('tunnel_name'))
-            self.send_json_response(response)
-        elif parsed_url.path == '/api/start-monitoring':
-            response = self.start_monitoring()
-            self.send_json_response(response)
-        elif parsed_url.path == '/api/stop-monitoring':
-            response = self.stop_monitoring()
-            self.send_json_response(response)
-        elif parsed_url.path == '/api/update-config':
-            response = self.update_config(data)
-            self.send_json_response(response)
-        else:
-            self.send_error(404, "API endpoint not found")
-    
-    def send_json_response(self, data):
-        """ارسال پاسخ JSON"""
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            # Python 3.11+ isoformat tolerant
+            from datetime import datetime
+            start = datetime.fromisoformat(st)
+            delta = datetime.now() - start
+            return str(delta).split(".")[0]
+        except Exception:
+            return "نامشخص"
+    except Exception:
+        return "نامشخص"
+
+def filter_service_name(name: str) -> bool:
+    # امنیت ساده: فقط سرویس‌هایی که شامل rathole هستند و دارای کاراکترهای مجاز.
+    import re
+    return ("rathole" in name.lower()) and bool(re.fullmatch(r"[A-Za-z0-9_.@:-]+", name))
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "RatholeMonitorWeb/1.2"
+
+    def _json(self, code=200, payload=None):
+        data = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        
-        json_data = json.dumps(data, ensure_ascii=False, indent=2)
-        self.wfile.write(json_data.encode('utf-8'))
-    
-    def serve_main_page(self):
-        """سرو کردن صفحه اصلی"""
+        self.wfile.write(data)
+
+    def _text(self, code=200, text=""):
+        data = text.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == "/":
+            # سرو HTML
+            try:
+                with open(os.path.join(MONITOR_DIR, "web_panel.html"), "r", encoding="utf-8") as f:
+                    html = f.read().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(html)))
+                self.end_headers()
+                self.wfile.write(html)
+            except Exception as e:
+                self._text(500, f"خطا در سرو HTML: {e}")
+            return
+
+        if path == "/api/status":
+            cfg = load_config()
+            tunnels = cfg.get("tunnels", [])
+            # اگر مانیتور هنوز tunnels را نریخته بود، از systemd کشف کن
+            if not tunnels:
+                for name in list_rathole_units():
+                    tunnels.append({
+                        "name": name,
+                        "type": "iran" if "iran" in name.lower() else "kharej",
+                        "status": "unknown",
+                        "restart_count": 0
+                    })
+            # رفرش وضعیت active از systemd
+            for t in tunnels:
+                try:
+                    t["status"] = "active" if is_active(t["name"]) else "inactive"
+                except Exception:
+                    t["status"] = t.get("status", "unknown")
+
+            # وضعیت سرویس مانیتور
+            monitoring_active = is_active("rathole-monitor")
+
+            # خواندن پورت وب از config
+            web_port = cfg.get("web_port", 8080)
+
+            self._json(200, {
+                "ok": True,
+                "monitoring_active": monitoring_active,
+                "uptime": uptime_str(),
+                "web_port": web_port,
+                "tunnels": tunnels,
+                "config": {
+                    "check_interval": cfg.get("check_interval"),
+                    "auto_restart": cfg.get("auto_restart"),
+                    "max_restart_attempts": cfg.get("max_restart_attempts"),
+                    "restart_delay": cfg.get("restart_delay"),
+                    "restart_window_seconds": cfg.get("restart_window_seconds"),
+                    "restart_on_inactive": cfg.get("restart_on_inactive"),
+                    "journal_since_seconds": cfg.get("journal_since_seconds"),
+                    "log_level": cfg.get("log_level"),
+                }
+            })
+            return
+
+        if path == "/api/logs":
+            qs = parse_qs(parsed.query)
+            name = (qs.get("name") or [""])[0]
+            n = int((qs.get("n") or ["50"])[0])
+            if not filter_service_name(name):
+                self._json(400, {"ok": False, "error": "نام سرویس نامعتبر"})
+                return
+            try:
+                r = run_cmd(["journalctl", "-u", name, "-n", str(n), "--no-pager"])
+                self._json(200, {"ok": True, "logs": r.stdout})
+            except Exception as e:
+                self._json(500, {"ok": False, "error": str(e)})
+            return
+
+        self._text(404, "Not found")
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length) if length > 0 else b"{}"
         try:
-            html_path = os.path.join(os.path.dirname(__file__), 'web_panel.html')
-            with open(html_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(content.encode('utf-8'))
-        except FileNotFoundError:
-            self.send_error(404, "Web panel file not found")
-    
-    def get_status(self):
-        """دریافت وضعیت سیستم"""
-        if self.monitor:
-            return self.monitor.get_status()
-        else:
-            return {
-                "error": "Monitor not available",
-                "running": False,
-                "tunnels": [],
-                "uptime": "0"
-            }
-    
-    def get_tunnels(self):
-        """دریافت لیست تانل‌ها"""
-        if self.monitor:
-            return {
-                "tunnels": self.monitor.config.get('tunnels', []),
-                "last_update": self.monitor.get_uptime()
-            }
-        else:
-            return {"tunnels": [], "error": "Monitor not available"}
-    
-    def get_logs(self):
-        """دریافت لاگ‌ها"""
-        try:
-            log_file = os.path.join(os.path.dirname(__file__), 'monitor.log')
-            if os.path.exists(log_file):
-                with open(log_file, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                    # آخرین 100 خط
-                    recent_logs = lines[-100:] if len(lines) > 100 else lines
-                    return {
-                        "logs": [line.strip() for line in recent_logs],
-                        "total_lines": len(lines)
-                    }
+            body = json.loads(raw.decode("utf-8") or "{}")
+        except Exception:
+            body = {}
+
+        if path == "/api/restart":
+            name = body.get("name", "")
+            if not filter_service_name(name):
+                self._json(400, {"ok": False, "error": "نام سرویس نامعتبر"})
+                return
+            try:
+                # reset-failed برای امنیت بیشتر
+                run_cmd(["systemctl", "reset-failed", name])
+                run_cmd(["systemctl", "restart", name])
+                time.sleep(1)
+                self._json(200, {"ok": True, "active": is_active(name)})
+            except Exception as e:
+                self._json(500, {"ok": False, "error": str(e)})
+            return
+
+        if path == "/api/monitor/start":
+            run_cmd(["systemctl", "start", "rathole-monitor"])
+            time.sleep(1)
+            self._json(200, {"ok": True, "active": is_active("rathole-monitor")})
+            return
+
+        if path == "/api/monitor/stop":
+            run_cmd(["systemctl", "stop", "rathole-monitor"])
+            time.sleep(1)
+            self._json(200, {"ok": True, "active": is_active("rathole-monitor")})
+            return
+
+        if path == "/api/config/update":
+            # فقط اجازه تغییر web_port (بقیه را ترجیحاً از خود مانیتور UI/فایل)
+            new_port = body.get("web_port")
+            if isinstance(new_port, int) and 1 <= new_port <= 65535:
+                cfg = load_config()
+                cfg["web_port"] = new_port
+                ok = save_config(cfg)
+                self._json(200, {"ok": ok, "web_port": cfg.get("web_port")})
             else:
-                return {"logs": [], "error": "Log file not found"}
-        except Exception as e:
-            return {"logs": [], "error": str(e)}
-    
-    def restart_tunnel(self, tunnel_name):
-        """ریستارت تانل"""
-        if not self.monitor:
-            return {"success": False, "error": "Monitor not available"}
-        
-        if not tunnel_name:
-            return {"success": False, "error": "Tunnel name required"}
-        
-        # پیدا کردن تانل
-        tunnel = None
-        for t in self.monitor.config.get('tunnels', []):
-            if t['name'] == tunnel_name:
-                tunnel = t
-                break
-        
-        if not tunnel:
-            return {"success": False, "error": "Tunnel not found"}
-        
-        # ریستارت تانل
-        try:
-            success = self.monitor.restart_tunnel(tunnel)
-            return {
-                "success": success,
-                "message": f"Tunnel {tunnel_name} restarted successfully" if success else "Failed to restart tunnel"
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-    
-    def start_monitoring(self):
-        """شروع مانیتورینگ"""
-        if not self.monitor:
-            return {"success": False, "error": "Monitor not available"}
-        
-        try:
-            self.monitor.start_monitoring()
-            return {"success": True, "message": "Monitoring started"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-    
-    def stop_monitoring(self):
-        """توقف مانیتورینگ"""
-        if not self.monitor:
-            return {"success": False, "error": "Monitor not available"}
-        
-        try:
-            self.monitor.stop_monitoring()
-            return {"success": True, "message": "Monitoring stopped"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-    
-    def update_config(self, config_data):
-        """بروزرسانی تنظیمات"""
-        if not self.monitor:
-            return {"success": False, "error": "Monitor not available"}
-        
-        try:
-            # بروزرسانی تنظیمات
-            for key, value in config_data.items():
-                if key in ['check_interval', 'auto_restart', 'max_restart_attempts', 'restart_delay']:
-                    self.monitor.config[key] = value
-            
-            # ذخیره تنظیمات
-            self.monitor.save_config()
-            return {"success": True, "message": "Configuration updated"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-    
-    def log_message(self, format, *args):
-        """حذف لاگ‌های غیرضروری"""
+                self._json(400, {"ok": False, "error": "web_port نامعتبر"})
+            return
+
+        self._text(404, "Not found")
+
+
+def main():
+    os.chdir(MONITOR_DIR)
+    cfg = load_config()
+    port = int(cfg.get("web_port", 8080))
+    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    print(f"🌐 Web server running on http://0.0.0.0:{port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
         pass
 
-class RatholeWebServer:
-    """کلاس وب سرور"""
-    
-    def __init__(self, monitor, port=8080):
-        self.monitor = monitor
-        self.port = port
-        self.server = None
-        self.thread = None
-        self.running = False
-        
-        # تنظیم لاگر
-        self.logger = logging.getLogger(__name__)
-    
-    def create_handler(self):
-        """ایجاد handler با monitor"""
-        def handler(*args, **kwargs):
-            return RatholeWebHandler(*args, monitor=self.monitor, **kwargs)
-        return handler
-    
-    def start(self):
-        """شروع وب سرور"""
-        if self.running:
-            self.logger.warning("Web server is already running")
-            return False
-        
-        try:
-            # ایجاد سرور
-            handler = self.create_handler()
-            self.server = HTTPServer(('0.0.0.0', self.port), handler)
-            
-            # تنظیم timeout
-            self.server.timeout = 1
-            
-            # شروع در thread جداگانه
-            self.thread = threading.Thread(target=self._serve_forever)
-            self.thread.daemon = True
-            self.thread.start()
-            
-            self.running = True
-            self.logger.info(f"Web server started on port {self.port}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to start web server: {e}")
-            return False
-    
-    def stop(self):
-        """توقف وب سرور"""
-        if not self.running:
-            return
-        
-        self.running = False
-        
-        if self.server:
-            self.server.shutdown()
-            self.server.server_close()
-        
-        if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=5)
-        
-        self.logger.info("Web server stopped")
-    
-    def _serve_forever(self):
-        """اجرای سرور"""
-        try:
-            while self.running:
-                self.server.handle_request()
-        except Exception as e:
-            self.logger.error(f"Web server error: {e}")
-        finally:
-            self.running = False
-
-def start_web_server(monitor, port=8080):
-    """تابع کمکی برای شروع وب سرور"""
-    web_server = RatholeWebServer(monitor, port)
-    
-    if web_server.start():
-        print(f"🌐 وب پنل در آدرس http://localhost:{port} در دسترس است")
-        print("برای توقف Ctrl+C بزنید")
-        
-        try:
-            # نگه داشتن سرور زنده
-            while web_server.running:
-                import time
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("\nتوقف وب سرور...")
-            web_server.stop()
-    else:
-        print("❌ خطا در شروع وب سرور")
-
-# تست مستقل وب سرور
 if __name__ == "__main__":
-    import sys
-    import argparse
-    
-    # Mock monitor برای تست
-    class MockMonitor:
-        def __init__(self):
-            self.config = {
-                "tunnels": [
-                    {
-                        "name": "rathole-iran-8080",
-                        "type": "iran",
-                        "status": "active",
-                        "restart_count": 2,
-                        "last_restart": "2025-01-31T10:30:00"
-                    },
-                    {
-                        "name": "rathole-kharej-8080", 
-                        "type": "kharej",
-                        "status": "active",
-                        "restart_count": 0,
-                        "last_restart": None
-                    }
-                ],
-                "check_interval": 300,
-                "auto_restart": True
-            }
-            self.running = True
-        
-        def get_status(self):
-            return {
-                "running": self.running,
-                "tunnels": self.config["tunnels"],
-                "uptime": "2 hours, 15 minutes"
-            }
-        
-        def get_uptime(self):
-            return "2 hours, 15 minutes"
-        
-        def restart_tunnel(self, tunnel):
-            tunnel["restart_count"] += 1
-            tunnel["last_restart"] = "2025-01-31T12:00:00"
-            return True
-        
-        def start_monitoring(self):
-            self.running = True
-        
-        def stop_monitoring(self):
-            self.running = False
-        
-        def save_config(self):
-            pass
-    
-    # پارس آرگومان‌ها
-    parser = argparse.ArgumentParser(description='Rathole Monitor Web Server')
-    parser.add_argument('--port', type=int, default=8080, help='Port to run web server on')
-    parser.add_argument('--test', action='store_true', help='Run in test mode with mock data')
-    args = parser.parse_args()
-    
-    # ایجاد monitor
-    if args.test:
-        monitor = MockMonitor()
-    else:
-        # اینجا باید RatholeMonitor واقعی import شود
-        try:
-            from monitor import RatholeMonitor
-            monitor = RatholeMonitor()
-        except ImportError:
-            print("❌ فایل monitor.py یافت نشد، استفاده از حالت تست")
-            monitor = MockMonitor()
-    
-    # شروع وب سرور
-    start_web_server(monitor, args.port)path == '/api/tunnels':
-            self.send_json_response(self.get_tunnels())
-        elif parsed_url.path == '/api/logs':
-            self.send_json_response(self.get_logs())
-        elif parsed_url.
+    main()
