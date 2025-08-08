@@ -315,6 +315,9 @@ sudo rm -rf /root/rathole-monitor
 
 ⚡ نصب سریع (تک‌خطی)
 
+```bash
+
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/install.sh)"
+```
 
 
