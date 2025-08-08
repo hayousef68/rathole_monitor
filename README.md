@@ -320,4 +320,92 @@ sudo rm -rf /root/rathole-monitor
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/hayousef68/rathole_monitor/main/install.sh)"
 ```
 
+اگر فایل‌ها رو کلون کردی، فقط اجرا کن:                                                                                                                                                                                 
+```bash
+sudo ./install.sh
+```
+
+🚀 اجرای سرویس‌ها
+
+```bash
+sudo systemctl start rathole-monitor
+sudo systemctl start rathole-monitor-web
+```
+
+
+🌐 مشاهده وب‌پنل
+پس از نصب، وب‌پنل روی پورت 8080 در دسترس خواهد بود:
+
+
+
+```bash
+http://YOUR_SERVER_IP:808
+```
+
+
+برای تغییر پورت، فایل config.json را ویرایش کنید یا از گزینه --web-port در نصب استفاده کنید
+```bash
+bash
+sudo ./install.sh --web-port 9090
+📊 مشاهده وضعیت و لاگ‌ها
+```
+
+
+```bash
+bash
+sudo systemctl status rathole-monitor
+sudo journalctl -u rathole-monitor -n 50 --no-pager
+```
+🔁 ریستارت دستی تانل‌ه
+
+از منوی CLI داخلی:
+```bash
+bash
+sudo python3 /root/rathole-monitor/monitor.py
+
+
+یا از وب‌پنل با دکمه "ریستارت"
+
+
+🧹 حذف کامل سرویس‌ها
+```bash
+bash
+sudo systemctl stop rathole-monitor rathole-monitor-web
+sudo systemctl disable rathole-monitor rathole-monitor-web
+sudo rm -rf /etc/systemd/system/rathole-monitor.service
+sudo rm -rf /etc/systemd/system/rathole-monitor-web.service
+sudo rm -rf /root/rathole-monitor
+sudo systemctl daemon-reexec
+```
+
+
+📁 ساختار فایل‌ها
+
+
+
+```bash
+/root/rathole-monitor/
+├── monitor.py           # اسکریپت مانیتورینگ
+├── web_server.py        # وب‌سرور ساده
+├── web_panel.html       # رابط کاربری وب
+├── config.json          # تنظیمات
+├── monitor.log          # لاگ‌ها
+├── scripts/             # اسکریپت‌های کمکی
+```
+
+
+
+✨ ویژگی‌ها
+
+
+بررسی وضعیت سرویس‌های Rathole
+
+ریستارت خودکار در صورت خطا یا inactive بودن
+
+محدودسازی ریستارت‌ها با بک‌آف
+
+وب‌پنل ساده برای مشاهده و کنترل
+
+بدون نیاز به کرون‌جاب
+
 
